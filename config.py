@@ -1,5 +1,6 @@
 # config.py
 import os
+import httpx
 from dotenv import load_dotenv
 from telegram.ext import filters
 
@@ -13,12 +14,25 @@ DEFAULT_INSTRUCTIONS = ""
 
 AVAILABLE_MODELS = ["gpt-4o", "o1"]
 
+HEADERS = {
+    "Content-Type": "application/json"
+}
+HEADERS_P = {
+    "Content-Type": "application/json"
+}
+HEADERS_T = {
+    "Content-Type": "application/json"
+}
+
 TIMEOUT_CONFIG = dict(
-    connect=10.0,
-    read=60.0,
-    write=10.0,
-    pool=5.0
+    connect=10,
+    read=60,
+    write=20,
+    pool=10
 )
+
+# Новый объект Timeout
+TIMEOUT = httpx.Timeout(**TIMEOUT_CONFIG)
 
 # Параметры Telegram
 MAX_TELEGRAM_TEXT = 4000

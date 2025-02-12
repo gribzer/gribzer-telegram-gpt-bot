@@ -1,4 +1,3 @@
-# handle_message.py
 import logging
 import httpx
 from telegram import Update
@@ -14,8 +13,10 @@ from db import (
     get_user_instructions,
     add_message_to_chat
 )
+
+# Вместо TIMEOUT_CONFIG импортируем TIMEOUT (и другие нужные переменные)
 from config import (
-    TIMEOUT_CONFIG,
+    TIMEOUT,
     DEFAULT_INSTRUCTIONS
 )
 from utils import convert_to_telegram_markdown_v2
@@ -45,6 +46,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_messages = get_chat_messages(active_chat_db_id)
     user_instructions = get_user_instructions(chat_id) or DEFAULT_INSTRUCTIONS
 
+    # Формируем список сообщений для API
     messages_for_api = []
     if user_instructions.strip():
         messages_for_api.append({"role": "system", "content": user_instructions})
@@ -52,6 +54,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         messages_for_api.append({"role": msg["role"], "content": msg["content"]})
     messages_for_api.append({"role": "user", "content": user_text})
 
+    # Сохраняем в БД отправленное пользователем сообщение
     add_message_to_chat(active_chat_db_id, "user", user_text)
 
     # Запрос к Proxy API
@@ -61,8 +64,6 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Authorization": f"Bearer {context.bot_data.get('PROXY_API_KEY', '')}",
             "Content-Type": "application/json"
         }
-        # или TELEGRAM_TOKEN / PROXY_API_KEY возьмите из config.py
-        # headers["Authorization"] = f"Bearer {PROXY_API_KEY}"
 
         payload = {
             "model": selected_model,
@@ -74,7 +75,8 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "presence_penalty": 0
         }
 
-        async with httpx.AsyncClient(**TIMEOUT_CONFIG) as client:
+        # ВАЖНО: Используем timeout=TIMEOUT вместо **TIMEOUT_CONFIG
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
@@ -89,6 +91,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Сохраняем ответ
     add_message_to_chat(active_chat_db_id, "assistant", answer)
 
+    # Подготавливаем ответ для Telegram с учётом MarkdownV2
     formatted_answer = convert_to_telegram_markdown_v2(answer)
     try:
         await update.message.reply_text(
