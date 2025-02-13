@@ -1,124 +1,105 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import openai
+# bot.py
 import logging
-import os
-import json
+import httpx
 
-from telegram import Update, Bot
 from telegram.ext import (
-    Updater,
+    Application,
     CommandHandler,
     MessageHandler,
-    Filters,
-    CallbackContext,
+    CallbackQueryHandler,
     ConversationHandler,
-    CallbackQueryHandler
+    filters
 )
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-# Установите уровень логирования
+from config import TELEGRAM_TOKEN
+from db import init_db, upgrade_db
+from handlers.menu import start_command, menu_command
+from handlers.callbacks import button_handler
+from handlers.conversation import (
+
+    # Новый вариант (меню инструкций):
+    instructions_add_entry,
+    instructions_edit_entry,
+    instructions_input_finish,
+    INSTRUCTIONS_INPUT,
+
+    # Для чатов:
+    new_chat_entry,
+    set_new_chat_title,
+    rename_chat_entry,
+    rename_chat_finish,
+    SET_NEW_CHAT_TITLE,
+    SET_RENAME_CHAT
+)
+from handle_message import handle_user_message
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Загрузите токен Telegram бота и API-ключ OpenAI из переменных среды
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-openai.api_key = OPENAI_API_KEY
-
-# Константы для ConversationHandler
-STATE_START = 0
-STATE_CHAT = 1
-
-def start(update: Update, context: CallbackContext):
-    """Команда /start – приветственное сообщение и начало взаимодействия."""
-    update.message.reply_text(
-        "Привет! Я GPT-бот. Задавай вопросы или используй /help для справки."
-    )
-    return STATE_CHAT
-
-def help_command(update: Update, context: CallbackContext):
-    """Команда /help – выводит подсказку по доступным командам."""
-    help_text = (
-        "Список доступных команд:\n"
-        "/start - начать работу с ботом\n"
-        "/help - показать это сообщение\n"
-        "/instructions - получить инструкции\n"
-        "Просто напишите мне сообщение, и я постараюсь ответить!\n"
-    )
-    update.message.reply_text(help_text)
-
-def instructions(update: Update, context: CallbackContext):
-    """
-    Команда /instructions – здесь вы можете разместить короткую инструкцию
-    по использованию бота или дополнительные сведения.
-    """
-    instruction_text = (
-        "Инструкции по работе с ботом:\n"
-        "1. Начните диалог командой /start.\n"
-        "2. Задавайте вопросы или вводите запросы, и я отвечу.\n"
-        "3. Для повторной подсказки используйте /help.\n"
-        "4. Используйте /instructions, чтобы снова увидеть эту инструкцию.\n"
-    )
-    update.message.reply_text(instruction_text)
-
-def cancel(update: Update, context: CallbackContext):
-    """Команда /cancel – завершает текущий диалог (ConversationHandler)."""
-    update.message.reply_text("Диалог завершён. Наберите /start, чтобы начать заново.")
-    return ConversationHandler.END
-
-def chat_handler(update: Update, context: CallbackContext):
-    """Основная логика ответа бота: отправляет запрос в OpenAI и возвращает ответ."""
-    user_text = update.message.text
-
-    # Пример базового обращения к OpenAI GPT-3.5 Turbo
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": user_text}],
-            max_tokens=150,
-            n=1,
-            stop=None,
-            temperature=0.7,
-        )
-        # Извлекаем ответ
-        bot_reply = response['choices'][0]['message']['content']
-        update.message.reply_text(bot_reply)
-    except Exception as e:
-        logger.error(f"Ошибка при обращении к OpenAI: {e}")
-        update.message.reply_text("Произошла ошибка при получении ответа. Попробуйте позже.")
-
-    return STATE_CHAT
 
 def main():
-    """Основная точка входа в программу: настраивает бота и запускает polling."""
-    updater = Updater(token=TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
+    init_db()
+    upgrade_db()
 
-    # Устанавливаем ConversationHandler
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start),
-                      CommandHandler("instructions", instructions)],
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # 2) ConversationHandler: создание нового чата
+    new_chat_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(new_chat_entry, pattern="^new_chat$")],
         states={
-            STATE_CHAT: [
-                MessageHandler(Filters.text & ~Filters.command, chat_handler),
-            ],
+            SET_NEW_CHAT_TITLE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_chat_title),
+            ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[],
+        map_to_parent={},
     )
 
-    # Регистрируем обработчики команд
-    dispatcher.add_handler(CommandHandler("help", help_command))
-    dispatcher.add_handler(conv_handler)
+    # 3) ConversationHandler: переименование чата
+    rename_chat_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(rename_chat_entry, pattern=r"^rename_\d+$")],
+        states={
+            SET_RENAME_CHAT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, rename_chat_finish),
+            ]
+        },
+        fallbacks=[],
+        map_to_parent={},
+    )
 
-    # Запускаем бота
-    updater.start_polling()
-    updater.idle()
+    # 4) Новый ConversationHandler для «меню инструкций» (Добавить/Редактировать)
+    instructions_manage_conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(instructions_add_entry, pattern="^instructions_add$"),
+            CallbackQueryHandler(instructions_edit_entry, pattern="^instructions_edit$")
+        ],
+        states={
+            INSTRUCTIONS_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, instructions_input_finish)
+            ]
+        },
+        fallbacks=[]
+    )
+
+    # Регистрируем
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("menu", menu_command))
+
+    application.add_handler(new_chat_conv_handler)           # Создание чата
+    application.add_handler(rename_chat_conv_handler)         # Переименование чата
+    application.add_handler(instructions_manage_conv_handler) # Меню инструкций (новое)
+
+    # Инлайн-кнопки (button_handler) ловит всё остальное
+    application.add_handler(CallbackQueryHandler(button_handler))
+
+    # Текстовые сообщения
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message))
+
+    application.run_polling()
+
 
 if __name__ == '__main__':
     main()
