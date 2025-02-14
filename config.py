@@ -1,4 +1,3 @@
-# config.py
 import os
 import httpx
 from dotenv import load_dotenv
@@ -12,16 +11,10 @@ PROXY_API_KEY = os.getenv('PROXY_API_KEY')
 DB_PATH = "bot_storage.db"
 DEFAULT_INSTRUCTIONS = ""
 
-AVAILABLE_MODELS = ["gpt-4o", "o3-mini"]
-
+# Заголовки (учитывая, что запрос к proxyapi требует Authorization)
 HEADERS = {
-    "Content-Type": "application/json"
-}
-HEADERS_P = {
-    "Content-Type": "application/json"
-}
-HEADERS_T = {
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {PROXY_API_KEY}"
 }
 
 TIMEOUT_CONFIG = dict(
@@ -30,8 +23,6 @@ TIMEOUT_CONFIG = dict(
     write=20,
     pool=10
 )
-
-# Новый объект Timeout
 TIMEOUT = httpx.Timeout(**TIMEOUT_CONFIG)
 
 # Параметры Telegram

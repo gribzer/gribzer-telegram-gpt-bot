@@ -1,0 +1,19 @@
+nohup: ignoring input
+/opt/telegram_bot/bot.py:50: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+  new_chat_conv_handler = ConversationHandler(
+/opt/telegram_bot/bot.py:62: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+  rename_chat_conv_handler = ConversationHandler(
+/opt/telegram_bot/bot.py:74: PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message. Read this FAQ entry to learn more about the per_* settings: https://github.com/python-telegram-bot/python-telegram-bot/wiki/Frequently-Asked-Questions#what-do-the-per_-settings-in-conversationhandler-do.
+  instructions_manage_conv_handler = ConversationHandler(
+2025-02-14 03:23:52,718 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8017550234:AAGtnB8JjnsEbep_0217C2Tydqi4ASBO8mU/getMe "HTTP/1.1 200 OK"
+2025-02-14 03:23:52,771 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8017550234:AAGtnB8JjnsEbep_0217C2Tydqi4ASBO8mU/deleteWebhook "HTTP/1.1 200 OK"
+2025-02-14 03:23:52,774 - telegram.ext.Application - INFO - Application started
+2025-02-14 03:24:02,061 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8017550234:AAGtnB8JjnsEbep_0217C2Tydqi4ASBO8mU/getUpdates "HTTP/1.1 200 OK"
+2025-02-14 03:24:02,226 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8017550234:AAGtnB8JjnsEbep_0217C2Tydqi4ASBO8mU/answerCallbackQuery "HTTP/1.1 200 OK"
+2025-02-14 03:24:02,298 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8017550234:AAGtnB8JjnsEbep_0217C2Tydqi4ASBO8mU/editMessageText "HTTP/1.1 200 OK"
+2025-02-14 03:24:03,598 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8017550234:AAGtnB8JjnsEbep_0217C2Tydqi4ASBO8mU/getUpdates "HTTP/1.1 200 OK"
+2025-02-14 03:24:03,655 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8017550234:AAGtnB8JjnsEbep_0217C2Tydqi4ASBO8mU/answerCallbackQuery "HTTP/1.1 200 OK"
+2025-02-14 03:24:03,725 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8017550234:AAGtnB8JjnsEbep_0217C2Tydqi4ASBO8mU/editMessageText "HTTP/1.1 200 OK"
+2025-02-14 03:24:13,627 - httpx - INFO - HTTP Request: POST https://api.telegram.org/bot8017550234:AAGtnB8JjnsEbep_0217C2Tydqi4ASBO8mU/getUpdates "HTTP/1.1 200 OK"
+2025-02-14 03:24:13,628 - telegram.ext.Application - INFO - Application is stopping. This might take a moment.
+2025-02-14 03:24:13,629 - telegram.ext.Application - INFO - Application.stop() complete
