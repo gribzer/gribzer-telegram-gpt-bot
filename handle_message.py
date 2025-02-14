@@ -14,8 +14,9 @@ from db import (
     add_message_to_chat
 )
 from config import (
-    TIMEOUT,             # ИМПОРТИРУЕМ TIMEOUT ВМЕСТО TIMEOUT_CONFIG
-    DEFAULT_INSTRUCTIONS
+    TIMEOUT,             # TIMEOUT задаётся в config.py
+    DEFAULT_INSTRUCTIONS,
+    PROXY_API_KEY        # <-- ВАЖНО: Импортируем сам ключ отсюда
 )
 from utils import convert_to_telegram_markdown_v2
 from telegram.error import BadRequest
@@ -25,17 +26,21 @@ logger = logging.getLogger(__name__)
 async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text.strip()
 
+    # Пример вызова команды "меню"
     if user_text.lower() == "меню":
         from handlers.menu import menu_command
         await menu_command(update, context)
         return
 
     chat_id = update.effective_chat.id
+
+    # Узнаём текущую модель для пользователя (если нет - ставим по умолчанию)
     selected_model = get_user_model(chat_id)
     if selected_model is None:
         selected_model = "gpt-3.5-turbo"
         set_user_model(chat_id, selected_model)
 
+    # Проверяем, есть ли у пользователя активный "чат" в БД
     active_chat_db_id = get_active_chat_id(chat_id)
     if not active_chat_db_id:
         active_chat_db_id = create_new_chat(chat_id, "Новый чат")
@@ -45,7 +50,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_messages = get_chat_messages(active_chat_db_id)
     user_instructions = get_user_instructions(chat_id) or DEFAULT_INSTRUCTIONS
 
-    # Формируем список сообщений для отправки в API
+    # Формируем список сообщений для Proxy API
     messages_for_api = []
     if user_instructions.strip():
         messages_for_api.append({"role": "system", "content": user_instructions})
@@ -60,12 +65,12 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         url = "https://api.proxyapi.ru/openai/v1/chat/completions"
 
-        # Собираем заголовки. Важно: "Authorization" добавляем только если есть ключ
+        # Собираем заголовки
         headers = {
             "Content-Type": "application/json"
         }
-
-        proxy_api_key = context.bot_data.get('PROXY_API_KEY', '').strip()
+        # Берём ключ из config.PROXY_API_KEY (чтобы не зависеть от context.bot_data)
+        proxy_api_key = PROXY_API_KEY.strip()
         if proxy_api_key:
             headers["Authorization"] = f"Bearer {proxy_api_key}"
 
@@ -79,13 +84,12 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "presence_penalty": 0
         }
 
-        # ВАЖНО: передаём timeout=TIMEOUT, а не **TIMEOUT_CONFIG
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
-            data = response.json()
 
-            # Извлекаем ответ
+            data = response.json()
+            # Извлекаем ответ ассистента
             answer = data["choices"][0]["message"]["content"]
 
     except httpx.ReadTimeout:
@@ -95,10 +99,10 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.error(f"Ошибка при вызове Proxy API: {e}", exc_info=True)
         answer = "Произошла ошибка при обработке запроса."
 
-    # Сохраняем ответ ассистента в базу
+    # Сохраняем ответ ассистента в базе
     add_message_to_chat(active_chat_db_id, "assistant", answer)
 
-    # Форматируем ответ и отправляем в Телеграм
+    # Форматируем ответ для Telegram (MarkdownV2)
     formatted_answer = convert_to_telegram_markdown_v2(answer)
     try:
         await update.message.reply_text(

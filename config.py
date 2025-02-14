@@ -12,7 +12,7 @@ PROXY_API_KEY = os.getenv('PROXY_API_KEY')
 DB_PATH = "bot_storage.db"
 DEFAULT_INSTRUCTIONS = ""
 
-AVAILABLE_MODELS = ["gpt-4o", "o1"]
+AVAILABLE_MODELS = ["gpt-4o", "o3-mini"]
 
 HEADERS = {
     "Content-Type": "application/json"

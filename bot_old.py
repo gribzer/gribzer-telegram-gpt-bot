@@ -39,7 +39,7 @@ SET_INSTRUCTIONS = 1
 SET_NEW_CHAT_TITLE = 2
 SET_RENAME_CHAT = 3
 
-AVAILABLE_MODELS = ["gpt-4o", "o1"]
+AVAILABLE_MODELS = ["gpt-4o", "o3-mini"]
 TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
 
 PAGE_SIZE = 5  # Кол-во сообщений на страницу (числом)
