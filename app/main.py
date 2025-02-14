@@ -1,52 +1,58 @@
+print("=== MAIN STARTED ===")
+
 import logging
 import uvicorn
 from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
+from contextlib import asynccontextmanager
+
 from app.config import DB_URL
 from app.webhooks.tkassa_webhook import router as tkassa_router
 from app.telegram_bot.bot import create_telegram_application
 
-# from alembic.config import Config
-# from alembic import command
-
 logger = logging.getLogger(__name__)
-
-app = FastAPI(
-    title="GPT Bot with T-Kassa",
-    version="1.0.0",
-    description="Пример интеграции Telegram-бота (PTB) и T-Кассы (FastAPI)."
-)
 
 # 1) Создаём движок и фабрику сессий
 engine: AsyncEngine = create_async_engine(DB_URL, echo=False, future=True)
 async_session_factory = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
-# 2) Подключаем router для T-Касса webhook
-app.include_router(tkassa_router, tags=["tkassa"])
-
-@app.on_event("startup")
-async def on_startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """
-    Событие запуска FastAPI (запускается 1 раз при старте приложения).
-    Здесь можно вызывать миграции Alembic, запускать Telegram-бот.
+    Lifespan-функция (заменяет on_event("startup")/on_event("shutdown")).
+    Код до 'yield' выполняется при запуске приложения,
+    код после 'yield' - при остановке.
     """
     logger.info("Starting up ...")
 
-    # Если нужно автоматически применять миграции:
-    # alembic_cfg = Config("alembic.ini")  # или путь к файлу
+    # Если нужно автоматически применять миграции через Alembic:
+    # from alembic.config import Config
+    # from alembic import command
+    # alembic_cfg = Config("alembic.ini")  # путь к вашему файлу
     # command.upgrade(alembic_cfg, "head")
 
-    # Теперь запускаем Telegram-бот (PTB) в webhook-режиме или long-polling.
+    # Запускаем Telegram-бот (PTB). При необходимости: webhook / polling и т.д.
     application = await create_telegram_application(async_session_factory)
-
-    # В PTB 20+ можно запускать long-polling:
-    # import asyncio
-    # asyncio.create_task(application.run_polling())
-
-    # или в webhook-режиме (с конфигом URL). Зависит от того, как вы настроите.
     logger.info("Telegram bot successfully created.")
+
+    yield  # <-- Пока приложение работает
+
+    # При желании можно добавить логику при остановке приложения.
+    logger.info("Shutting down ...")
+
+
+app = FastAPI(
+    title="GPT Bot with T-Kassa",
+    version="1.0.0",
+    description="Пример интеграции Telegram-бота (PTB) и T-Кассы (FastAPI).",
+    lifespan=lifespan,  # <-- передаем нашу lifespan-функцию
+)
+
+# 2) Подключаем router для T-Касса webhook
+app.include_router(tkassa_router, tags=["tkassa"])
+
 
 @app.middleware("http")
 async def db_session_middleware(request: Request, call_next):
@@ -66,10 +72,11 @@ def get_db_session(request: Request) -> AsyncSession:
     """
     return request.state.db_session
 
+
 def start():
     """
     Если вы хотите запускать это приложение командой python -m app.main,
-    то в разделе `if __name__ == "__main__": start()`
+    то в разделе `if __name__ == "__main__": start()`.
     """
     uvicorn.run(
         "app.main:app",
