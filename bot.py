@@ -1,4 +1,6 @@
+import asyncio
 import logging
+
 from telegram import BotCommand, MenuButtonCommands
 from telegram.ext import (
     ApplicationBuilder,
@@ -6,7 +8,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
-    filters
+    filters,
 )
 from config import TELEGRAM_TOKEN
 from db import init_db, upgrade_db
@@ -34,31 +36,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def on_startup(application):
-    """
-    Функция, вызываемая при старте (уже в event loop). Здесь:
-    - Устанавливаем команды, чтобы они отображались в меню (синяя кнопка).
-    """
-    commands = [
-        BotCommand("start", "Запустить бота"),
-        BotCommand("menu", "Показать главное меню"),
-        BotCommand("help", "Справка о боте"),
-    ]
-    await application.bot.set_my_commands(commands)
-    # Установим кнопку меню (необязательно)
-    await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-    logger.info("on_startup: команды бота установлены.")
-
-
 def main():
-    # 1. Инициализация БД
+    # 1. Инициализируем БД
     init_db()
     upgrade_db()
 
-    # 2. Создаём приложение
+    # 2. Создаём приложение Telegram
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # 3. Регистрируем хендлеры
+    # 3. Регистрируем хендлеры (команды, conversation и т.д.)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -102,28 +88,39 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message))
 
-    # 4. Запуск вебхука (Application.run_webhook)
-    #    - listen: на каком IP слушаем
-    #    - port:    на каком порту
-    #    - webhook_url: тот URL, на который Telegram будет слать апдейты
-    #    - key и cert: ваш SSL (если запускаетесь напрямую на 443)
-    #    - on_startup: вызывается после запуска event loop, но до принятия апдейтов
+    # 4. Опционально: устанавливаем команды бота и кнопку меню (до запуска webhook)
+    #    Так как set_my_commands и set_chat_menu_button - асинхронные,
+    #    мы вызовем их напрямую через event loop.
+    commands = [
+        BotCommand("start", "Запустить бота"),
+        BotCommand("menu", "Показать главное меню"),
+        BotCommand("help", "Справка о боте"),
+    ]
 
-    # Путь к вашему .pem/.key (Let’s Encrypt, например)
-    ssl_cert = "/etc/letsencrypt/live/gribzergpt.ru/fullchain.pem" 
+    async def setup_bot_commands():
+        await application.bot.set_my_commands(commands)
+        await application.bot.set_chat_menu_button(MenuButtonCommands())
+        logger.info("Команды бота и кнопка меню установлены.")
+
+    # Выполним асинхронно в текущем (глобальном) event loop
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(setup_bot_commands())
+
+    # 5. Запускаем Webhook
+    #    Если слушаем напрямую порт 443, нужны права root или setcap на Python
+    #    Если используете Nginx-прокси, можно listen=127.0.0.1:8000 + проксирование
+    ssl_cert = "/etc/letsencrypt/live/gribzergpt.ru/fullchain.pem"
     ssl_priv = "/etc/letsencrypt/live/gribzergpt.ru/privkey.pem"
 
-    # Полный URL, куда Telegram будет отправлять запросы (обратите внимание на /TOKEN)
-    webhook_url = f"https://gribzergpt.ru/{TELEGRAM_TOKEN}"
+    webhook_url = f"https://gribzergpt.ru/{TELEGRAM_TOKEN}"  # уже установлен в Telegram
 
     logger.info("Starting webhook mode...")
     application.run_webhook(
         listen="0.0.0.0",
         port=443,
+        cert=ssl_cert,  # PTB v20: 'cert' вместо 'ssl_cert'
+        key=ssl_priv,   # PTB v20: 'key' вместо 'ssl_key'
         webhook_url=webhook_url,
-        ssl_cert=ssl_cert,
-        ssl_key=ssl_priv,
-        on_startup=on_startup,
     )
 
 
