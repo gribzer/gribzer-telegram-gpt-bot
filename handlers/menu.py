@@ -69,11 +69,11 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("🤖 Сменить модель", callback_data="change_model"),
-            InlineKeyboardButton("📝 Инструкции", callback_data="update_instructions"),
+            InlineKeyboardButton("💬 История текущего чата", callback_data="history_current_chat"),
         ],
         [
+            InlineKeyboardButton("📝 Инструкции", callback_data="update_instructions"),
             InlineKeyboardButton("❓ Помощь", callback_data="help"),
-            InlineKeyboardButton("💬 История", callback_data="history_current_chat"),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)

@@ -44,11 +44,12 @@ def main():
     # 2. Создаём приложение Telegram
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # 3. Регистрируем хендлеры (команды, conversation и т.д.)
+    # 3. Регистрируем команды/хендлеры
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("help", help_command))
 
+    # ConversationHandlers
     new_chat_conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(new_chat_entry, pattern="^new_chat$")],
         states={
@@ -56,7 +57,7 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, set_new_chat_title),
             ]
         },
-        fallbacks=[]
+        fallbacks=[],
     )
     application.add_handler(new_chat_conv_handler)
 
@@ -67,7 +68,7 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, rename_chat_finish),
             ]
         },
-        fallbacks=[]
+        fallbacks=[],
     )
     application.add_handler(rename_chat_conv_handler)
 
@@ -81,16 +82,17 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, instructions_input_finish)
             ]
         },
-        fallbacks=[]
+        fallbacks=[],
     )
     application.add_handler(instructions_manage_conv_handler)
 
+    # Общий CallbackQueryHandler (кнопки)
     application.add_handler(CallbackQueryHandler(button_handler))
+
+    # Хендлер на обычное текстовое сообщение
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message))
 
-    # 4. Опционально: устанавливаем команды бота и кнопку меню (до запуска webhook)
-    #    Так как set_my_commands и set_chat_menu_button - асинхронные,
-    #    мы вызовем их напрямую через event loop.
+    # 4. Устанавливаем команды и кнопку меню
     commands = [
         BotCommand("start", "Запустить бота"),
         BotCommand("menu", "Показать главное меню"),
@@ -99,30 +101,22 @@ def main():
 
     async def setup_bot_commands():
         await application.bot.set_my_commands(commands)
-        await application.bot.set_chat_menu_button(MenuButtonCommands())
+        await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
         logger.info("Команды бота и кнопка меню установлены.")
 
-    # Выполним асинхронно в текущем (глобальном) event loop
     loop = asyncio.get_event_loop()
     loop.run_until_complete(setup_bot_commands())
 
-    # 5. Запускаем Webhook
-    #    Если слушаем напрямую порт 443, нужны права root или setcap на Python
-    #    Если используете Nginx-прокси, можно listen=127.0.0.1:8000 + проксирование
-    ssl_cert = "/etc/letsencrypt/live/gribzergpt.ru/fullchain.pem"
-    ssl_priv = "/etc/letsencrypt/live/gribzergpt.ru/privkey.pem"
+    # 5. Запускаем Webhook (без SSL, на локальном порту)
+    # Публичный URL: https://gribzergpt.ru/<Токен>
+    # Предполагается, что Nginx принимает HTTPS на 443 и делает proxy_pass на http://127.0.0.1:8000
 
-    webhook_url = f"https://gribzergpt.ru/{TELEGRAM_TOKEN}"  # уже установлен в Telegram
-
-    logger.info("Starting webhook mode...")
+    logger.info("Starting webhook mode on 127.0.0.1:8000 (proxied by Nginx on 443)...")
     application.run_webhook(
-        listen="0.0.0.0",
-        port=443,
-        cert=ssl_cert,  # PTB v20: 'cert' вместо 'ssl_cert'
-        key=ssl_priv,   # PTB v20: 'key' вместо 'ssl_key'
-        webhook_url=webhook_url,
+        listen="127.0.0.1",
+        port=8000,
+        webhook_url="https://gribzergpt.ru/bot",  # важно без / в конце
     )
-
 
 if __name__ == "__main__":
     main()

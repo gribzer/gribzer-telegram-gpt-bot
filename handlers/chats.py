@@ -30,8 +30,10 @@ async def show_all_chats_list(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not all_chats:
         text = "У вас пока нет ни одного чата."
         keyboard = [
-            [InlineKeyboardButton("Создать новый чат", callback_data="new_chat")],
-            [InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")],
+            [
+                InlineKeyboardButton("Создать новый чат", callback_data="new_chat"),
+                InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu"),
+            ],
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
@@ -44,8 +46,7 @@ async def show_all_chats_list(update: Update, context: ContextTypes.DEFAULT_TYPE
         keyboard.append([InlineKeyboardButton(f"{prefix}{title}", callback_data=f"open_chat_{db_id}")])
 
     text_result = "\n".join(text_lines)
-    keyboard.append([InlineKeyboardButton("Создать новый чат", callback_data="new_chat")])
-    keyboard.append([InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")])
+    keyboard.append([InlineKeyboardButton("Создать новый чат", callback_data="new_chat"), InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")])
 
     await query.edit_message_text(text_result, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -100,10 +101,14 @@ async def show_single_chat_menu(update: Update, context: ContextTypes.DEFAULT_TY
 
     text = f"Чат: {chat_title}\nID: {chat_db_id}\n\nВыберите действие:"
     keyboard = [
-        [InlineKeyboardButton("Назначить активным", callback_data=f"set_active_{chat_db_id}")],
-        [InlineKeyboardButton("Переименовать", callback_data=f"rename_{chat_db_id}")],
-        [InlineKeyboardButton("История", callback_data=f"history_{chat_db_id}:page_0")],
-        [InlineKeyboardButton(favorite_btn_text, callback_data=favorite_cb)],
+        [
+            InlineKeyboardButton("Назначить активным", callback_data=f"set_active_{chat_db_id}"),
+            InlineKeyboardButton("Переименовать", callback_data=f"rename_{chat_db_id}"),
+         ],
+        [
+            InlineKeyboardButton("История", callback_data=f"history_{chat_db_id}:page_0"),
+            InlineKeyboardButton(favorite_btn_text, callback_data=favorite_cb),
+        ],
         [InlineKeyboardButton("Удалить", callback_data=f"delete_chat_{chat_db_id}")],
         [InlineKeyboardButton("🔙 Назад к списку", callback_data="all_chats")]
     ]

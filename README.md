@@ -1,308 +1,341 @@
-# Gribzer Telegram GPT Bot
+# gribzer-telegram-gpt-bot
 
-Gribzer Telegram GPT Bot — это бот для Telegram, использующий GPT-модели (через [ProxyAPI](https://proxyapi.ru/docs)) для генерации ответов на сообщения пользователей.  
-Проект позволяет обходить ограничение OpenAI в России, используя прокси-сервис ProxyAPI, при этом максимально сохраняется совместимость с официальными методами OpenAI API.
+Telegram-бот, использующий GPT (через proxyapi) и хранящий чаты в SQLite. Поддерживает:
 
-## Основные возможности
+1. **Webhook-режим** (через Nginx-прокси на порт 443).
+2. **Polling-режим** (для простых тестов без SSL).
+3. **Сохранение** истории чатов и инструкций в локальную SQLite-базу.
+4. Запуск в виде **systemd-сервиса** (продакшен).
+5. При желании — «hot reload» в режиме разработки (через `watchfiles` или `entr`).
 
-1. **Переключение моделей**: пользователь может выбрать одну из заранее заданных моделей (например, gpt-4o, o1, o3-mini) или подставить любую другую, если логика позволяет.  
-2. **Механизм чатов**: бот хранит несколько чатов на каждого пользователя (поддержка избранных, переименование, просмотр истории).  
-3. **Инструкции (Prompts)**: можно задать «инструкцию» или «контекст» для улучшения ответов модели.  
-4. **Гибкая архитектура**: использование `handlers/` для раздельной логики меню, колбэков, conversation flows, хранение данных в локальной базе, а также гибкая интеграция через `proxyapi_client`.  
-5. **Возможность работы через webhook** (с SSL-доменом) или polling.
+## 1. Установка
 
-## Структура проекта
-
-Основные файлы и папки:
-
-```
-gribzer-telegram-gpt-bot/
-├── bot.py                  # Точка входа: запуск бота (webhook или polling), регистрация хендлеров
-├── config.py               # Общие настройки: токены, ProxyAPI key, таймауты, пути к БД
-├── db.py                   # Логика БД (инициализация, апгрейд, CRUD для чатов, моделей, инструкций)
-├── proxyapi_client.py      # Модуль для обращения к ProxyAPI (chat completions, models, embeddings и т.д.)
-├── handle_message.py       # Логика обработки входящих текстовых сообщений (не команд)
-├── handlers/
-│   ├── menu.py             # Команды /start, /menu, /help. Формирование главного меню (inline-кнопки)
-│   ├── callbacks.py        # Обработка callback_data (inline-кнопок): смена модели, история чата, инструкции и т.д.
-│   ├── chats.py            # Логика вывода списка чатов, избранных, истории
-│   └── conversation.py     # Определение ConversationHandler для инструкций, нового чата и др.
-├── requirements.txt        # Список зависимостей
-├── .env                    # Файл с переменными окружения (TELEGRAM_BOT_TOKEN, PROXY_API_KEY и т.д.)
-├── README.md               # Текущее руководство
-└── LICENSE                 # Лицензия MIT
-```
-
-Ниже — детальные пояснения по каждому модулю.
-
-### 1. bot.py
-
-- **Назначение**: точка входа. Здесь запускается приложение Telegram, регистрируются все хендлеры (команды, callback query, conversation), и выбирается способ работы:
-  - **polling** (через `application.run_polling()`)
-  - **webhook** (через `application.run_webhook()`)
-- **on_startup**: при необходимости (особенно для webhook) здесь вызываются асинхронные действия, вроде `setMyCommands`, `setChatMenuButton`.
-- **Пример** (polling):
-
-  ```python
-  if __name__ == "__main__":
-      main()  # init_db(); upgrade_db(); application.run_polling()
-  ```
-
-- **Пример** (webhook):
-
-  ```python
-  application.run_webhook(
-      listen="127.0.0.1",
-      port=8000,
-      webhook_url="https://ваш-домен/<TOKEN>"
-  )
-  ```
-
-### 2. config.py
-
-- **Хранение конфигурации**:
-  - Считывает `.env` (через `python-dotenv`) для переменных `TELEGRAM_BOT_TOKEN`, `PROXY_API_KEY`.
-  - Хранит `TIMEOUT` для HTTP-запросов, параметры БД, другие константы (например, размер страницы, лимиты и т.д.).
-- **Пример**:
-
-  ```python
-  import os
-  from dotenv import load_dotenv
-  load_dotenv()
-  
-  TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-  PROXY_API_KEY = os.getenv("PROXY_API_KEY")
-  DB_PATH = "bot_storage.db"
-  ```
-
-### 3. db.py
-
-- **Инициализация БД**: функции `init_db()` и `upgrade_db()` создают необходимые таблицы (чаты, модели, инструкции и т. д.) и выполняют миграции.
-- **CRUD-функции**: например, `set_user_model(chat_id, model)`, `get_active_chat_id(user_id)`, `delete_chat(chat_db_id)` и т. п.
-- Использует либо `sqlite3`, либо другую СУБД (зависит от реализации).
-
----
-
-### 4. proxyapi_client.py
-
-- **Назначение**: единая точка для общения с `ProxyAPI`.
-  - Методы: `fetch_available_models()`, `create_chat_completion(...)`, `create_embedding(...)`, `upload_file(...)` и т. д.
-  - Внутри формируется `BASE_URL = "https://api.proxyapi.ru/openai/v1"`, заголовки `Authorization: Bearer <PROXY_API_KEY>` и отправляются запросы через `httpx`.
-- **Глобальный кэш**: при желании можно хранить список моделей `AVAILABLE_MODELS` и инициализировать их вызовом `init_available_models()`.
-
----
-
-### 5. handle_message.py
-
-- **Логика обработки** обычных текстовых сообщений (не команд).
-- Например, если пользователь просто пишет, бот берёт текущую модель (через `get_user_model(chat_id)`) и формирует запрос в `proxyapi_client.create_chat_completion(...)`, затем возвращает ответ в чат.
-
----
-
-### 6. Папка handlers/
-
-Разделена на несколько модулей по смыслу:
-
-### 1. menu.py
-   - Обрабатывает команды `/start`, `/menu`, `/help`.
-   - Формирует инлайн-клавиатуру главного меню (кнопки "Все чаты", "Избранные чаты", "Сменить модель", "Инструкции", "История" и т. п.).
-   - Обычно при `/start` высылает приветственное сообщение и упоминает: "Нажмите /menu или используйте встроенную кнопку меню Telegram".
-
-### 2. callbacks.py
-   - Главный обработчик inline-кнопок через `button_handler`.
-   - Смотрит на `callback_data` (`"all_chats"`, `"favorite_chats"`, `"change_model"`, `"model_gpt-4o"` и т. д.) и вызывает соответствующие функции.
-   - Именно здесь реализована логика "Выбрать модель": при нажатии "Сменить модель" появляется список заранее заданных моделей (например, `["gpt-4o", "o1", "o3-mini"]`), а при выборе сохраняется в БД.
-   - Здесь же "История текущего чата", "Удалить инструкции" и т. д.
-
-### 3. chats.py
-   - Функции для показа всех чатов (`show_all_chats_list`), любимых чатов (`show_favorite_chats_list`), истории чата (`show_chat_history`) и т. п.
-   - Вызывается из `callbacks.py`.
-
-### 4. conversation.py
-   - Содержит описания `ConversationHandler` или специальные хендлеры для "пошаговых" сценариев:
-     - Добавление / редактирование инструкций (меню инструкций).
-     - Создание / переименование чата.
-   - Включает константы состояния (`SET_INSTRUCTIONS`, `SET_NEW_CHAT_TITLE`, `SET_RENAME_CHAT`, `INSTRUCTIONS_INPUT`).
-
-Таким образом, в `handlers/` сконцентрирован код, связанный с Telegram-хендлерами (команды, инлайн-кнопки, `conversation`).
-
----
-
-## Установка и запуск
-
-### 1. Клонируйте репозиторий:
+### 1.1. Клонировать репозиторий
 
 ```bash
+bash
+КопироватьРедактировать
 git clone https://github.com/gribzer/gribzer-telegram-gpt-bot.git
 cd gribzer-telegram-gpt-bot
+
 ```
 
-### 2. Установите зависимости:
+### 1.2. Создать виртуальное окружение и установить зависимости
 
 ```bash
+bash
+КопироватьРедактировать
+python3 -m venv venv
+source venv/bin/activate  # (Linux/macOS)
+# Для Windows: venv\Scripts\activate
+
+pip install --upgrade pip
 pip install -r requirements.txt
+
 ```
 
-Убедитесь, что используется Python 3.7+.
+> Примечание: Для webhook-режима убедитесь, что установлен PTB с поддержкой вебхуков:
+> 
+> 
+> ```bash
+> bash
+> КопироватьРедактировать
+> pip install "python-telegram-bot[webhooks]"
+> 
+> ```
+> 
 
-### 3. Настройте переменные окружения:
+### 1.3. Настроить переменные окружения (.env)
 
-Создайте файл `.env`:
+Создайте файл `.env` в корне проекта со следующим содержимым:
 
-```env
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-PROXY_API_KEY=your_proxy_api_key
+```
+dotenv
+КопироватьРедактировать
+TELEGRAM_TOKEN=<Ваш_Токен_От_BotFather>
+PROXY_API_KEY=<Ваш_Key_От_ProxyApi_Если_Нужно_Иначе_Оставьте_Пустым>
+
 ```
 
-Можно также добавить настройки для webhook (домен, пути к SSL-файлам), если запускаетесь напрямую на HTTPS.
+Это позволит `config.py` считать значения через `os.getenv`.
 
-### 4. Инициализируйте БД (опционально, если используется SQLite внутри):
-
-- При запуске `python bot.py` произойдёт вызов `init_db()` и `upgrade_db()`.
-- В файле `config.py` или `db.py` может быть путь `DB_PATH = "bot_storage.db"`.
-
-### 5. Запуск бота:
-
-- **Через long polling** (по умолчанию в `bot.py`):
-
-  ```bash
-  python bot.py
-  ```
-  
-  Бот запустится и будет опрашивать Telegram-сервер.
-
-- **Через webhook**:
-  - Настройте SSL и домен (см. ниже).
-  - В `bot.py` вместо `run_polling()` вызовите `run_webhook(...)`, указав `webhook_url="https://ваш-домен/..."`
-  - Запустите `python bot.py`. Теперь Telegram будет слать обновления по HTTPS.
+**Обязательна** переменная `TELEGRAM_TOKEN`. Если `PROXY_API_KEY` не нужен, можно оставить пустым.
 
 ---
 
-## Запуск бота через webhook (с SSL и доменом)
+## 2. Запуск бота
 
-### Краткая инструкция:
+Есть два основных режима: **Webhook** и **Polling**.
 
-1. **Настройте домен** (например, `gribzergpt.ru`) и укажите в DNS на IP вашего сервера.
-2. **Установите Nginx** и **Let’s Encrypt** (`certbot`) для получения SSL-сертификата.
-3. **Настройте reverse-proxy**: Nginx принимает `https://gribzergpt.ru/<PATH>` и пересылает на ваше Python-приложение, которое слушает `127.0.0.1:8000`.
-4. **В `bot.py` используйте**:
+### 2.1. Webhook-режим (через Nginx на 443)
 
-   ```python
-   application.run_webhook(
-       listen="127.0.0.1",
-       port=8000,
-       webhook_url="https://gribzergpt.ru/BOT_PATH"
-   )
-   ```
+**Сценарий**: вы имеете **домен** (например, `gribzergpt.ru`) с валидным SSL-сертификатом (Let’s Encrypt или другой CA), и **Nginx** слушает 443. Nginx проксирует запросы к боту, который внутри слушает локальный порт (например, `127.0.0.1:8000`).
 
-   PTB автоматически вызовет `setWebhook` на Telegram Bot API.
+### 2.1.1. Настройка Nginx
 
-5. Telegram начнёт присылать апдейты на `https://gribzergpt.ru/BOT_PATH`.
+Пример минимального конфига (Ubuntu: `/etc/nginx/sites-available/gribzergpt.ru.conf`):
 
-См. подробнее в разделе "Issues" или документации Telegram Bot API (и в нашем проекте есть отдельные инструкции/подсказки в коде).
+```
+nginx
+КопироватьРедактировать
+server {
+    listen 80;
+    server_name gribzergpt.ru;
+    return 301 https://$host$request_uri;
+}
 
-# Gribzer Telegram GPT Bot
+server {
+    listen 443 ssl;
+    server_name gribzergpt.ru;
 
-## Использование бота
+    ssl_certificate /etc/letsencrypt/live/gribzergpt.ru/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/gribzergpt.ru/privkey.pem;
 
-### Команды (через Telegram-меню)
+    # Прокидываем пути /bot (или любой другой) -> локальный порт 8000
+    location /bot {
+        proxy_pass http://127.0.0.1:8000/;  # обязательно со слешем в конце
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
 
-- `/start`: Приветственное сообщение.
-- `/menu`: Вызывает главное меню (инлайн-кнопки).
-- `/help`: Вывод справки.
+```
 
-### Главное меню
+Перезагрузите Nginx:
 
-При `/menu` появляется инлайн-клавиатура:
-- **Все чаты / Избранные чаты**: выводит списки доступных чатов пользователя.
-- **Сменить модель**: открывает кнопки выбора моделей (по умолчанию: `gpt-4o`, `o1`, `o3-mini`).
-- **Инструкции**: позволяет добавить/редактировать «общие инструкции».
-- **История**: показывает историю текущего (активного) чата.
-- **Помощь**: краткая справка.
+```bash
+bash
+КопироватьРедактировать
+sudo nginx -t
+sudo systemctl reload nginx
 
-### Переключение модели
+```
 
-При выборе «Сменить модель» бот выводит несколько кнопок (заранее заданных). Пользователь нажимает, и та модель привязывается к текущему пользователю/чату (по логике `set_user_model`). Все дальнейшие сообщения к GPT будут отправляться с `model=<выбранная_модель>`.
+Теперь все запросы на `https://gribzergpt.ru/bot` будут перенаправляться на `127.0.0.1:8000/`.
 
-### Механизм чатов
+### 2.1.2. Правка `bot.py`
 
-- Можно создать новый чат (например, для новой темы разговора).
-- Можно сделать чат избранным (⭐), переименовать, удалить.
-- Просмотреть историю.
+Убедитесь, что в финальном коде `bot.py` есть:
 
-### Инструкции (Prompts)
+```python
+python
+КопироватьРедактировать
+application.run_webhook(
+    listen="127.0.0.1",
+    port=8000,
+    webhook_url="https://gribzergpt.ru/bot",  # публичный URL, который Telegram будет вызывать
+)
 
-- Можно добавить/редактировать общие инструкции, которые будут «добавляться» к каждому запросу. Удобно, чтобы задать общий стиль ответов или формат.
+```
+
+> Обратите внимание:
+> 
+> - **Нет** `cert=...`/`key=...`, SSL занимается Nginx.
+> - `listen="127.0.0.1"` — слушает локальный адрес (безопасно).
+> - `"/bot"` в конце webhook_url совпадает с `location /bot` в Nginx.
+
+### 2.1.3. Запуск
+
+```bash
+bash
+КопироватьРедактировать
+python bot.py
+
+```
+
+или
+
+```bash
+bash
+КопироватьРедактировать
+python3 bot.py
+
+```
+
+В логах увидите что-то вроде:
+
+```
+nginx
+КопироватьРедактировать
+INFO - Starting webhook mode on 127.0.0.1:8000 (proxied by Nginx on 443)...
+INFO - Application started
+
+```
+
+Проверить:
+
+```bash
+bash
+КопироватьРедактировать
+curl "https://api.telegram.org/bot<Токен>/getWebhookInfo"
+
+```
+
+В `result.url` должно быть `https://gribzergpt.ru/bot`, не 404. Теперь при отправке `/start` в Телеграм-бот — должно работать.
 
 ---
 
-## Работа с ProxyAPI
+### 2.2. Polling-режим (упрощённый)
 
-Сервис [ProxyAPI](https://proxyapi.ru/) позволяет отправлять запросы к OpenAI (и другим сервисам) из России.
+Если не хотите морочиться с SSL и Nginx, можно включить **polling**. Достаточно **заменить** в `bot.py` строку:
 
-- `PROXY_API_KEY` (в `.env`) необходим для авторизации.
-- В модуле `proxyapi_client.py` формируется запрос вида:
+```python
+python
+КопироватьРедактировать
+application.run_polling()
 
-  ```python
-  response = client.post(
-      "https://api.proxyapi.ru/openai/v1/chat/completions",
-      headers={ "Authorization": f"Bearer {PROXY_API_KEY}" },
-      json=payload
-  )
-  ```
+```
 
-- Документация: [proxyapi.ru/docs](https://proxyapi.ru/docs).
+и убрать вызовы `run_webhook`. Запускаете:
+
+```bash
+bash
+КопироватьРедактировать
+python bot.py
+
+```
+
+В консоли бот будет опрашивать Telegram-сервер раз в несколько секунд, и вы сразу сможете тестировать `/start`, `menu`, т.д. Но при этом **не нужен** никакой веб-сервер и сертификат.
 
 ---
 
-## Дополнительно
+## 3. Автоматический запуск (systemd-сервис)
 
-### Автоматический запуск (systemd)
+Для **продакшена** удобно, чтобы бот автоматически запускался при старте сервера. Пример юнит-файла: `/etc/systemd/system/gptbot.service`:
 
-Для продакшена удобно запускать бота как сервис:
-
-Файл `/etc/systemd/system/mybot.service`:
-
-```ini
+```
+ini
+КопироватьРедактировать
 [Unit]
-Description=My Telegram GPT Bot
+Description=GPT Telegram Bot
 After=network.target
 
 [Service]
-User=ubuntu
-WorkingDirectory=/opt/gribzer-telegram-gpt-bot
-ExecStart=/opt/gribzer-telegram-gpt-bot/venv/bin/python bot.py
-Restart=on-failure
+Type=simple
+WorkingDirectory=/opt/telegram_bot
+ExecStart=/opt/telegram_bot/venv/bin/python3 /opt/telegram_bot/bot.py
+Restart=always
+
+# Можно указать User=telegrambot (предварительно создав такого пользователя)
 
 [Install]
 WantedBy=multi-user.target
+
 ```
 
-Затем выполните команды:
+Затем:
 
-```sh
+```bash
+bash
+КопироватьРедактировать
 sudo systemctl daemon-reload
-sudo systemctl enable mybot
-sudo systemctl start mybot
+sudo systemctl enable gptbot
+sudo systemctl start gptbot
+systemctl status gptbot
+
 ```
 
-### Docker (опционально)
+Если всё в порядке, получите `Active: active (running)`. Лог смотреть:
 
-При желании можно упаковать в `Dockerfile` (не входит в базовый проект). Нужно лишь скопировать всё, установить зависимости и запустить `bot.py`.
+```bash
+bash
+КопироватьРедактировать
+journalctl -u gptbot -f
+
+```
+
+При обновлении кода выполните:
+
+```bash
+bash
+КопироватьРедактировать
+sudo systemctl restart gptbot
+
+```
 
 ---
 
-## Лицензия
+## 4. Hot Reload при разработке
 
-Проект распространяется под лицензией [MIT](LICENSE).
+Systemd **не** умеет нативно отслеживать изменения файлов и перезапускать процесс. Для **быстрой разработки** без ручного рестарта можно использовать инструменты:
+
+- [**watchfiles**](https://github.com/samuelcolvin/watchfiles)
+    
+    ```bash
+    bash
+    КопироватьРедактировать
+    pip install watchfiles
+    python -m watchfiles --python=bot.py .
+    
+    ```
+    
+    При любом изменении `.py`-файла бот перезапустится автоматически.
+    
+- **entr**
+    
+    ```bash
+    bash
+    КопироватьРедактировать
+    ls *.py handlers/*.py | entr -r python3 bot.py
+    
+    ```
+    
+    Аналогичный принцип.
+    
+
+> В продакшене, наоборот, предпочитают статичный запуск через systemd и делают обновления вручную (deploy + systemctl restart).
+> 
 
 ---
 
-## Контакты / Обратная связь
+## 5. Особые моменты
 
-- Вопросы по ProxyAPI: [contact@proxyapi.ru](mailto:contact@proxyapi.ru)
-- Pull Requests и Issues принимаются в [репозитории](https://github.com/gribzer/gribzer-telegram-gpt-bot).
-- Бот находится в активной разработке. Будем рады любому вкладу!
+1. **Переменные окружения**: кроме `TELEGRAM_TOKEN`, можно задать `PROXY_API_KEY`. Если вы не используете внешний proxyapi, оставьте пустым.
+2. **Пер_MESSAGE_WARNINGS**:
+    
+    Вы можете видеть предупреждения вроде:
+    
+    ```
+    rust
+    КопироватьРедактировать
+    PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message.
+    
+    ```
+    
+    Это не фатально. Если для ConversationHandler вас устраивает поведение `per_message=False`, можно игнорировать предупреждения. Или сделать `per_message=True`, но тогда все обработчики должны быть `CallbackQueryHandler`.
+    
+3. **Database**: По умолчанию бот хранит данные в `bot_storage.db` (см. `DB_PATH` в `config.py`). Убедитесь, что у процесса есть права на запись.
+4. **Обновление кода**: При каждом изменении логики нужно перезапустить бот (или настроить hot reload в dev-режиме).
 
-Спасибо за использование **Gribzer Telegram GPT Bot**! Будем рады вашим замечаниям и предложениям.
+---
 
+## 6. Структура проекта (кратко)
+
+- `bot.py`: Точка входа (запуск бота, регистрация хендлеров, webhook или polling).
+- `config.py`: Чтение `.env`, базовые настройки.
+- `db.py`: Логика инициализации/апгрейда SQLite.
+- `handlers/`: Модули-обработчики:
+    - `menu.py`, `callbacks.py`, `conversation.py`, ...
+- `handle_message.py`: Обработка текстовых сообщений.
+
+---
+
+## 7. Быстрый старт
+
+1. Склонировать репо и установить зависимости.
+2. Создать `.env` с `TELEGRAM_TOKEN=...`.
+3. (Опционально) Настроить Nginx + SSL, если хотите webhook. Иначе используйте `run_polling()`.
+4. Запустить:
+    
+    ```bash
+    bash
+    КопироватьРедактировать
+    python bot.py
+    
+    ```
+    
+5. Открыть Telegram, найти бота, ввести `/start`. Должен отвечать.
+
+Если что-то не работает, смотрите логи в консоли или `journalctl -u <service>`.
