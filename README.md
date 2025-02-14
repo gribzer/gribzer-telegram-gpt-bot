@@ -12,8 +12,6 @@
 ### 1.1. Клонировать репозиторий
 
 ```bash
-bash
-Копировать
 git clone https://github.com/gribzer/gribzer-telegram-gpt-bot.git
 cd gribzer-telegram-gpt-bot
 
@@ -22,8 +20,6 @@ cd gribzer-telegram-gpt-bot
 ### 1.2. Создать виртуальное окружение и установить зависимости
 
 ```bash
-bash
-Копировать
 python3 -m venv venv
 source venv/bin/activate  # (Linux/macOS)
 # Windows: venv\Scripts\activate
@@ -41,8 +37,6 @@ pip install -r requirements.txt
 В корне проекта создайте `.env` со значениями ваших ключей:
 
 ```
-ini
-Копировать
 TELEGRAM_TOKEN=<Ваш_Токен_От_BotFather>
 PROXY_API_KEY=<Опционально: Key для Proxy API>
 
@@ -63,8 +57,6 @@ DB_URL=sqlite+aiosqlite:///./bot_storage.db
 Если вы используете SQLAlchemy + Alembic:
 
 ```bash
-bash
-Копировать
 # Применить миграции, если есть alembic/
 alembic upgrade head
 
@@ -81,8 +73,6 @@ alembic upgrade head
 1. В `app/main.py` или `bot.py` замените строку, ответственную за запуск, на что-то вроде:
     
     ```python
-    python
-    Копировать
     application.run_polling()
     
     ```
@@ -90,15 +80,12 @@ alembic upgrade head
 2. Запустите:или
     
     ```bash
-    bash
-    Копировать
     python -m app.main
     
     ```
     
     ```bash
-    bash
-    Копировать
+
     python bot.py
     
     ```
@@ -112,8 +99,6 @@ alembic upgrade head
 3. Убедитесь, что в `app/main.py` или `bot.py` вызывается:
     
     ```python
-    python
-    Копировать
     application.run_webhook(
         listen="127.0.0.1",
         port=8000,
@@ -132,8 +117,6 @@ alembic upgrade head
 2. Создайте/обновите файл **Dockerfile** (пример):
     
     ```
-    dockerfile
-    Копировать
     FROM python:3.10-slim
     WORKDIR /app
     COPY requirements.txt .
@@ -146,8 +129,6 @@ alembic upgrade head
 3. **Соберите** образ:
     
     ```bash
-    bash
-    Копировать
     docker build -t my-bot:latest .
     
     ```
@@ -155,8 +136,6 @@ alembic upgrade head
 4. **Запустите** контейнер:
     
     ```bash
-    bash
-    Копировать
     docker run -d -p 8000:8000 --name my-bot-container my-bot:latest
     
     ```
@@ -166,8 +145,7 @@ alembic upgrade head
 Проверяйте логи:
 
 ```bash
-bash
-Копировать
+
 docker logs -f my-bot-container
 
 ```
@@ -179,8 +157,6 @@ docker logs -f my-bot-container
 Пример (может отличаться в деталях):
 
 ```
-bash
-Копировать
 gribzer-telegram-gpt-bot/
 ├── alembic/
 │   ├── env.py
@@ -240,8 +216,6 @@ gribzer-telegram-gpt-bot/
 Для продакшена можно сделать systemd-юнит `/etc/systemd/system/mygptbot.service`:
 
 ```
-ini
-Копировать
 [Unit]
 Description=GPT Telegram Bot
 After=network.target
@@ -260,8 +234,6 @@ WantedBy=multi-user.target
 Затем:
 
 ```bash
-bash
-Копировать
 sudo systemctl daemon-reload
 sudo systemctl enable mygptbot
 sudo systemctl start mygptbot
