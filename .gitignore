@@ -1,5 +1,32 @@
-venv/
+# Python __pycache__ и байт-код
 __pycache__/
+*.py[cod]
+*.pyo
+*.pyd
 *.pyc
-bot_storage.db
+
+# Виртуальные окружения
+venv/
+.env/  # если у вас папка окружения называется .env (редко, но бывает)
+
+# Файл окружения (секреты)
 .env
+
+# SQLite база
+bot_storage.db
+
+# Служебные файлы IDE
+*.idea/
+*.vscode/
+*.egg-info/
+
+# Артефакты Docker
+docker-compose.override.yml
+*.log
+build/
+dist/
+*.tar.gz
+*.whl
+
+# Если используете pytest, можно исключить .pytest_cache
+.pytest_cache/

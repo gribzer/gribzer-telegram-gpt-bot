@@ -1,3 +1,8 @@
-python-telegram-bot
+python-telegram-bot==20.0
 openai
 python-dotenv
+fastapi
+uvicorn
+flask
+sqlalchemy
+httpx

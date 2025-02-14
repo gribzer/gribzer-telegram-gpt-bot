@@ -1,32 +1,52 @@
-# handlers/callbacks.py
+# app/telegram_bot/handlers/callback_general.py
+
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
-from db import (
+# Предположим, вы создали user_service и chat_service:
+# user_service.py:
+#   async def get_user_instructions(session: AsyncSession, chat_id: int) -> str: ...
+#   async def set_user_instructions(session: AsyncSession, chat_id: int, text: str) -> None: ...
+#   async def set_user_model(session: AsyncSession, chat_id: int, model: str) -> None: ...
+#   async def get_user_model(session: AsyncSession, chat_id: int) -> str: ...
+#   async def get_active_chat_id(session: AsyncSession, chat_id: int) -> int: ...
+#   async def set_active_chat_id(session: AsyncSession, chat_id: int, chat_db_id: int) -> None: ...
+#
+# chat_service.py:
+#   async def delete_chat(session: AsyncSession, chat_db_id: int) -> None: ...
+#   async def set_chat_favorite(session: AsyncSession, chat_db_id: int, is_fav: bool) -> None: ...
+#
+from app.services.user_service import (
     get_user_instructions,
     set_user_instructions,
     set_user_model,
     get_user_model,
     get_active_chat_id,
-    set_active_chat_id,
+    set_active_chat_id
+)
+from app.services.chat_service import (
     delete_chat,
     set_chat_favorite
 )
-from handlers.menu import menu_command
-from handlers.chats import (
+
+# Импорт хендлеров
+from app.telegram_bot.handlers.menu import menu_command
+from app.telegram_bot.handlers.chats import (
     show_all_chats_list,
     show_favorite_chats_list,
     show_single_chat_menu,
     show_chat_history
 )
-from handlers.conversation import (
+from app.telegram_bot.handlers.conversation import (
     rename_chat_entry,
     new_chat_entry,
     instructions_add_entry,
     instructions_edit_entry
 )
-from config import (
+
+# Если используете ConversationHandler, импортируйте состояния:
+from app.config import (
     SET_INSTRUCTIONS,
     SET_NEW_CHAT_TITLE,
     SET_RENAME_CHAT
@@ -35,11 +55,23 @@ from config import (
 logger = logging.getLogger(__name__)
 
 async def instructions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Показывает "Меню инструкций": текущие инструкции, кнопки "редактировать / удалить / добавить".
+    """
     query = update.callback_query
     chat_id = query.message.chat.id
 
-    current_instructions = get_user_instructions(chat_id) or ""
-    is_empty = (not current_instructions.strip())
+    # Берём session_factory
+    session_factory = context.application.bot_data.get("session_factory")
+    if not session_factory:
+        logger.error("No session_factory found. Can't load instructions.")
+        await query.edit_message_text("Ошибка: нет подключения к БД.")
+        return
+
+    async with session_factory() as session:
+        current_instructions = await get_user_instructions(session, chat_id)
+        current_instructions = current_instructions or ""
+    is_empty = not current_instructions.strip()
 
     if is_empty:
         text = "Текущие инструкции: (пусто)"
@@ -54,18 +86,30 @@ async def instructions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("В меню", callback_data="back_to_menu")])
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-
 async def instructions_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Удаление (очистка) инструкций у пользователя.
+    """
     query = update.callback_query
     chat_id = query.message.chat.id
 
-    set_user_instructions(chat_id, "")
-    await query.answer("Инструкции удалены.")
+    session_factory = context.application.bot_data.get("session_factory")
+    if not session_factory:
+        logger.error("No session_factory found. Can't delete instructions.")
+        await query.edit_message_text("Ошибка: нет подключения к БД.")
+        return
 
+    async with session_factory() as session:
+        await set_user_instructions(session, chat_id, "")
+
+    await query.answer("Инструкции удалены.")
     await instructions_menu(update, context)
 
-
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Универсальный обработчик callback_data для тех случаев,
+    которые не попадают в cabinet_callback_handler и т. д.
+    """
     query = update.callback_query
     data = query.data
 
@@ -89,11 +133,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "change_model":
         # Заранее заданный список моделей
         predefined_models = ["gpt-4o", "o1", "o3-mini"]
-
-        keyboard = [
-            [InlineKeyboardButton(model, callback_data=f"model_{model}")]
-            for model in predefined_models
-        ]
+        keyboard = [[InlineKeyboardButton(model, callback_data=f"model_{model}")] for model in predefined_models]
         keyboard.append([InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")])
 
         await query.edit_message_text(
@@ -103,11 +143,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data.startswith("model_"):
+        session_factory = context.application.bot_data.get("session_factory")
+        if not session_factory:
+            logger.error("No session_factory found. Can't set model.")
+            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            return
+
         selected_model = data.split("_", 1)[1]
         chat_id = query.message.chat.id
-        set_user_model(chat_id, selected_model)
 
-        # Сразу возвращаем в меню (без "Выбрана модель:")
+        async with session_factory() as session:
+            await set_user_model(session, chat_id, selected_model)
+
+        # Сразу возвращаем в меню (без "Выбрана модель: ...")
         await menu_command(update, context)
         return
 
@@ -124,8 +172,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await instructions_delete(update, context)
 
     elif data == "help":
-        # Если хотите показать сразу /help, можно вызвать help_command,
-        # либо просто текст. Покажем inline:
         text = (
             "❓ Помощь:\n"
             "1. Отправьте любое текстовое сообщение – бот ответит.\n"
@@ -144,11 +190,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data == "history_current_chat":
-        # Показать историю активного чата
+        session_factory = context.application.bot_data.get("session_factory")
+        if not session_factory:
+            logger.error("No session_factory found. Can't get active chat.")
+            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            return
+
         user_id = query.message.chat.id
-        active_chat_id = get_active_chat_id(user_id)
-        if active_chat_id:
-            await show_chat_history(update, context, active_chat_id, page=0)
+        async with session_factory() as session:
+            active_id = await get_active_chat_id(session, user_id)
+        if active_id:
+            await show_chat_history(update, context, active_id, page=0)
         else:
             await query.edit_message_text(
                 text="У вас нет активного чата. Создайте или выберите чат.",
@@ -164,9 +216,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data.startswith("set_active_"):
+        session_factory = context.application.bot_data.get("session_factory")
+        if not session_factory:
+            logger.error("No session_factory found. Can't set active chat.")
+            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            return
+
         chat_db_id = int(data.split("_")[-1])
         user_id = query.message.chat.id
-        set_active_chat_id(user_id, chat_db_id)
+        async with session_factory() as session:
+            await set_active_chat_id(session, user_id, chat_db_id)
+
         await query.edit_message_text(
             text=f"Чат {chat_db_id} теперь активен.",
             reply_markup=InlineKeyboardMarkup([
@@ -179,11 +239,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await rename_chat_entry(update, context)
 
     elif data.startswith("delete_chat_"):
+        session_factory = context.application.bot_data.get("session_factory")
+        if not session_factory:
+            logger.error("No session_factory found. Can't delete chat.")
+            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            return
+
         chat_db_id = int(data.split("_")[-1])
         user_id = query.message.chat.id
-        if get_active_chat_id(user_id) == chat_db_id:
-            set_active_chat_id(user_id, None)
-        delete_chat(chat_db_id)
+        async with session_factory() as session:
+            active_id = await get_active_chat_id(session, user_id)
+            if active_id == chat_db_id:
+                await set_active_chat_id(session, user_id, None)
+            await delete_chat(session, chat_db_id)
+
         await query.edit_message_text(
             text=f"Чат {chat_db_id} удалён.",
             reply_markup=InlineKeyboardMarkup([
@@ -193,14 +262,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data.startswith("fav_"):
+        session_factory = context.application.bot_data.get("session_factory")
+        if not session_factory:
+            logger.error("No session_factory found. Can't favorite chat.")
+            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            return
         chat_db_id = int(data.split("_")[-1])
-        set_chat_favorite(chat_db_id, True)
+        async with session_factory() as session:
+            await set_chat_favorite(session, chat_db_id, True)
+
         await show_single_chat_menu(update, context, chat_db_id)
         return
 
     elif data.startswith("unfav_"):
+        session_factory = context.application.bot_data.get("session_factory")
+        if not session_factory:
+            logger.error("No session_factory found. Can't unfavorite chat.")
+            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            return
         chat_db_id = int(data.split("_")[-1])
-        set_chat_favorite(chat_db_id, False)
+        async with session_factory() as session:
+            await set_chat_favorite(session, chat_db_id, False)
+
         await show_single_chat_menu(update, context, chat_db_id)
         return
 

@@ -1,31 +1,43 @@
-# handlers/chats.py
+# app/telegram_bot/handlers/chats.py
+
 import logging
-import sqlite3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from config import (
-    MAX_TELEGRAM_TEXT,
-    PAGE_SIZE,
-    TRUNCATE_SUFFIX
-)
-from db import (
-    get_user_chats,
-    get_favorite_chats,
-    get_chat_messages,
-    get_chat_title_by_id,
-    set_chat_favorite,
-    get_active_chat_id,
-)
-from db import delete_chat, rename_chat, set_active_chat_id
-from utils import truncate_if_too_long
+from app.config import PAGE_SIZE
+from app.telegram_bot.utils import truncate_if_too_long
+
+# Предположим, вы создали chat_service с методами:
+#   async def get_user_chats(session, user_id: int) -> list[ChatModel]
+#   async def get_favorite_chats(session, user_id: int) -> list[ChatModel]
+#   async def get_chat_title(session, chat_db_id: int) -> str | None
+#   async def is_favorite_chat(session, chat_db_id: int) -> bool
+#   async def set_chat_favorite(session, chat_db_id: int, is_favorite: bool)
+#   async def delete_chat(session, chat_db_id: int)
+#   async def rename_chat(session, chat_db_id: int, new_title: str)
+#   async def get_chat_messages(session, chat_db_id: int) -> list[dict]
+# и т.д. (подобно старым функциям в db.py).
+#
+from app.services import chat_service
 
 logger = logging.getLogger(__name__)
 
-# Показ списка всех чатов
 async def show_all_chats_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Показ списка всех чатов пользователя (inline-кнопки).
+    """
     query = update.callback_query
     user_id = query.message.chat.id
-    all_chats = get_user_chats(user_id)
+
+    # 1. Получаем session_factory
+    session_factory = context.application.bot_data.get("session_factory")
+    if not session_factory:
+        logger.error("No session_factory found in bot_data.")
+        await query.edit_message_text("Ошибка: нет подключения к БД.")
+        return
+
+    # 2. Загружаем чаты
+    async with session_factory() as session:
+        all_chats = await chat_service.get_user_chats(session, user_id)
 
     if not all_chats:
         text = "У вас пока нет ни одного чата."
@@ -38,23 +50,45 @@ async def show_all_chats_list(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
+    # Формируем текст
     text_lines = ["Ваши чаты:\n"]
     keyboard = []
-    for (db_id, title, is_fav) in all_chats:
+    for chat_data in all_chats:
+        db_id = chat_data.id
+        title = chat_data.title
+        is_fav = chat_data.is_favorite
         prefix = "⭐ " if is_fav else ""
         text_lines.append(f"• ID {db_id}: {prefix}{title}")
-        keyboard.append([InlineKeyboardButton(f"{prefix}{title}", callback_data=f"open_chat_{db_id}")])
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{prefix}{title}",
+                callback_data=f"open_chat_{db_id}"
+            )
+        ])
 
     text_result = "\n".join(text_lines)
-    keyboard.append([InlineKeyboardButton("Создать новый чат", callback_data="new_chat"), InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")])
+    keyboard.append([
+        InlineKeyboardButton("Создать новый чат", callback_data="new_chat"),
+        InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")
+    ])
 
     await query.edit_message_text(text_result, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Показ избранных чатов
 async def show_favorite_chats_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Показ избранных чатов (⭐).
+    """
     query = update.callback_query
     user_id = query.message.chat.id
-    fav_chats = get_favorite_chats(user_id)
+
+    session_factory = context.application.bot_data.get("session_factory")
+    if not session_factory:
+        logger.error("No session_factory found in bot_data.")
+        await query.edit_message_text("Ошибка: нет подключения к БД.")
+        return
+
+    async with session_factory() as session:
+        fav_chats = await chat_service.get_favorite_chats(session, user_id)
 
     if not fav_chats:
         text = "У вас нет избранных чатов."
@@ -66,35 +100,44 @@ async def show_favorite_chats_list(update: Update, context: ContextTypes.DEFAULT
 
     text_lines = ["Избранные чаты:\n"]
     keyboard = []
-    for (db_id, title, is_fav) in fav_chats:
+    for chat_data in fav_chats:
+        db_id = chat_data.id
+        title = chat_data.title
         prefix = "⭐ "
         text_lines.append(f"• ID {db_id}: {prefix}{title}")
-        keyboard.append([InlineKeyboardButton(f"{prefix}{title}", callback_data=f"open_chat_{db_id}")])
+        keyboard.append([
+            InlineKeyboardButton(f"{prefix}{title}", callback_data=f"open_chat_{db_id}")
+        ])
 
     text_result = "\n".join(text_lines)
     keyboard.append([InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")])
 
     await query.edit_message_text(text_result, reply_markup=InlineKeyboardMarkup(keyboard))
 
-
-# Показ под-меню конкретного чата
 async def show_single_chat_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_db_id: int):
-    from db import get_chat_title_by_id  # чтобы избежать круговых импортов
+    """
+    Показ подменю конкретного чата: активировать, переименовать, посмотреть историю, избранное, удалить.
+    """
     query = update.callback_query
-    chat_title = get_chat_title_by_id(chat_db_id)
-    if not chat_title:
-        await query.edit_message_text("Чат не найден (возможно, удалён).", reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Назад", callback_data="all_chats")]
-        ]))
+
+    session_factory = context.application.bot_data.get("session_factory")
+    if not session_factory:
+        logger.error("No session_factory found in bot_data.")
+        await query.edit_message_text("Ошибка: нет подключения к БД.")
         return
 
-    # Проверяем, избранный ли он
-    conn = sqlite3.connect("bot_storage.db")
-    c = conn.cursor()
-    c.execute("SELECT is_favorite FROM user_chats WHERE id=?", (chat_db_id,))
-    row = c.fetchone()
-    conn.close()
-    is_fav = (row and row[0] == 1)
+    async with session_factory() as session:
+        chat_title = await chat_service.get_chat_title(session, chat_db_id)
+        if not chat_title:
+            await query.edit_message_text(
+                "Чат не найден (возможно, удалён).",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Назад", callback_data="all_chats")]
+                ])
+            )
+            return
+
+        is_fav = await chat_service.is_favorite_chat(session, chat_db_id)
 
     favorite_btn_text = "Убрать из избранного" if is_fav else "Добавить в избранное"
     favorite_cb = f"unfav_{chat_db_id}" if is_fav else f"fav_{chat_db_id}"
@@ -104,7 +147,7 @@ async def show_single_chat_menu(update: Update, context: ContextTypes.DEFAULT_TY
         [
             InlineKeyboardButton("Назначить активным", callback_data=f"set_active_{chat_db_id}"),
             InlineKeyboardButton("Переименовать", callback_data=f"rename_{chat_db_id}"),
-         ],
+        ],
         [
             InlineKeyboardButton("История", callback_data=f"history_{chat_db_id}:page_0"),
             InlineKeyboardButton(favorite_btn_text, callback_data=favorite_cb),
@@ -114,17 +157,27 @@ async def show_single_chat_menu(update: Update, context: ContextTypes.DEFAULT_TY
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Показ истории (пагинация)
 async def show_chat_history(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_db_id: int, page: int):
+    """
+    Показ истории сообщений (с пагинацией).
+    """
     query = update.callback_query
-    messages = get_chat_messages(chat_db_id)
+
+    session_factory = context.application.bot_data.get("session_factory")
+    if not session_factory:
+        logger.error("No session_factory found in bot_data.")
+        await query.edit_message_text("Ошибка: нет подключения к БД.")
+        return
+
+    async with session_factory() as session:
+        messages = await chat_service.get_chat_messages(session, chat_db_id)
     total_messages = len(messages)
 
-    from config import PAGE_SIZE
     start_index = page * PAGE_SIZE
     end_index = start_index + PAGE_SIZE
     page_messages = messages[start_index:end_index]
 
+    # Если нет сообщений на этой странице, откатываемся на предыдущую (если page>0)
     if not page_messages:
         if page > 0:
             return await show_chat_history(update, context, chat_db_id, page - 1)
@@ -143,14 +196,16 @@ async def show_chat_history(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         text_lines.append(f"{i}) {role_emoji} {msg['role']}: {msg['content']}")
 
     text_result = "\n".join(text_lines)
-    text_result = truncate_if_too_long(text_result)  # обрезка
+    text_result = truncate_if_too_long(text_result)
 
+    # Кнопки пагинации
     buttons = []
     if page > 0:
         buttons.append(InlineKeyboardButton("◀️", callback_data=f"history_{chat_db_id}:page_{page-1}"))
     if end_index < total_messages:
         buttons.append(InlineKeyboardButton("▶️", callback_data=f"history_{chat_db_id}:page_{page+1}"))
 
+    # Кнопка "Назад" к меню чата
     buttons.append(InlineKeyboardButton("🔙 Назад", callback_data=f"open_chat_{chat_db_id}"))
 
     reply_markup = InlineKeyboardMarkup([buttons])

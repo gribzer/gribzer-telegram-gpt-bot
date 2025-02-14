@@ -1,20 +1,19 @@
 # gribzer-telegram-gpt-bot
 
-Telegram-бот, использующий GPT (через proxyapi) и хранящий чаты в SQLite. Поддерживает:
+Это Telegram-бот, который:
 
-1. **Webhook-режим** (через Nginx-прокси на порт 443).
-2. **Polling-режим** (для простых тестов без SSL).
-3. **Сохранение** истории чатов и инструкций в локальную SQLite-базу.
-4. Запуск в виде **systemd-сервиса** (продакшен).
-5. При желании — «hot reload» в режиме разработки (через `watchfiles` или `entr`).
+- Поддерживает взаимодействие с нейросетью через Proxy API (или прямой OpenAI).
+- Хранит чаты/историю в SQLite (или другой БД через SQLAlchemy).
+- Может работать в режиме **Webhook** (через Nginx/HTTPS) или **Polling** (упрощённый).
+- Имеет личный кабинет (баланс, платежи) и подключение к T-Кассе / Tinkoff / Telegram Payments.
 
-## 1. Установка
+## 1. Установка и подготовка окружения
 
 ### 1.1. Клонировать репозиторий
 
 ```bash
 bash
-КопироватьРедактировать
+Копировать
 git clone https://github.com/gribzer/gribzer-telegram-gpt-bot.git
 cd gribzer-telegram-gpt-bot
 
@@ -24,201 +23,234 @@ cd gribzer-telegram-gpt-bot
 
 ```bash
 bash
-КопироватьРедактировать
+Копировать
 python3 -m venv venv
 source venv/bin/activate  # (Linux/macOS)
-# Для Windows: venv\Scripts\activate
+# Windows: venv\Scripts\activate
 
 pip install --upgrade pip
 pip install -r requirements.txt
 
 ```
 
-> Примечание: Для webhook-режима убедитесь, что установлен PTB с поддержкой вебхуков:
-> 
-> 
-> ```bash
-> bash
-> КопироватьРедактировать
-> pip install "python-telegram-bot[webhooks]"
-> 
-> ```
+> Примечание: если используете async webhook для PTB, убедитесь, что python-telegram-bot[webhooks] установился корректно.
 > 
 
-### 1.3. Настроить переменные окружения (.env)
+### 1.3. Создать и заполнить файл `.env`
 
-Создайте файл `.env` в корне проекта со следующим содержимым:
-
-```
-dotenv
-КопироватьРедактировать
-TELEGRAM_TOKEN=<Ваш_Токен_От_BotFather>
-PROXY_API_KEY=<Ваш_Key_От_ProxyApi_Если_Нужно_Иначе_Оставьте_Пустым>
-
-```
-
-Это позволит `config.py` считать значения через `os.getenv`.
-
-**Обязательна** переменная `TELEGRAM_TOKEN`. Если `PROXY_API_KEY` не нужен, можно оставить пустым.
-
----
-
-## 2. Запуск бота
-
-Есть два основных режима: **Webhook** и **Polling**.
-
-### 2.1. Webhook-режим (через Nginx на 443)
-
-**Сценарий**: вы имеете **домен** (например, `gribzergpt.ru`) с валидным SSL-сертификатом (Let’s Encrypt или другой CA), и **Nginx** слушает 443. Nginx проксирует запросы к боту, который внутри слушает локальный порт (например, `127.0.0.1:8000`).
-
-### 2.1.1. Настройка Nginx
-
-Пример минимального конфига (Ubuntu: `/etc/nginx/sites-available/gribzergpt.ru.conf`):
-
-```
-nginx
-КопироватьРедактировать
-server {
-    listen 80;
-    server_name gribzergpt.ru;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name gribzergpt.ru;
-
-    ssl_certificate /etc/letsencrypt/live/gribzergpt.ru/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/gribzergpt.ru/privkey.pem;
-
-    # Прокидываем пути /bot (или любой другой) -> локальный порт 8000
-    location /bot {
-        proxy_pass http://127.0.0.1:8000/;  # обязательно со слешем в конце
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
-
-```
-
-Перезагрузите Nginx:
-
-```bash
-bash
-КопироватьРедактировать
-sudo nginx -t
-sudo systemctl reload nginx
-
-```
-
-Теперь все запросы на `https://gribzergpt.ru/bot` будут перенаправляться на `127.0.0.1:8000/`.
-
-### 2.1.2. Правка `bot.py`
-
-Убедитесь, что в финальном коде `bot.py` есть:
-
-```python
-python
-КопироватьРедактировать
-application.run_webhook(
-    listen="127.0.0.1",
-    port=8000,
-    webhook_url="https://gribzergpt.ru/bot",  # публичный URL, который Telegram будет вызывать
-)
-
-```
-
-> Обратите внимание:
-> 
-> - **Нет** `cert=...`/`key=...`, SSL занимается Nginx.
-> - `listen="127.0.0.1"` — слушает локальный адрес (безопасно).
-> - `"/bot"` в конце webhook_url совпадает с `location /bot` в Nginx.
-
-### 2.1.3. Запуск
-
-```bash
-bash
-КопироватьРедактировать
-python bot.py
-
-```
-
-или
-
-```bash
-bash
-КопироватьРедактировать
-python3 bot.py
-
-```
-
-В логах увидите что-то вроде:
-
-```
-nginx
-КопироватьРедактировать
-INFO - Starting webhook mode on 127.0.0.1:8000 (proxied by Nginx on 443)...
-INFO - Application started
-
-```
-
-Проверить:
-
-```bash
-bash
-КопироватьРедактировать
-curl "https://api.telegram.org/bot<Токен>/getWebhookInfo"
-
-```
-
-В `result.url` должно быть `https://gribzergpt.ru/bot`, не 404. Теперь при отправке `/start` в Телеграм-бот — должно работать.
-
----
-
-### 2.2. Polling-режим (упрощённый)
-
-Если не хотите морочиться с SSL и Nginx, можно включить **polling**. Достаточно **заменить** в `bot.py` строку:
-
-```python
-python
-КопироватьРедактировать
-application.run_polling()
-
-```
-
-и убрать вызовы `run_webhook`. Запускаете:
-
-```bash
-bash
-КопироватьРедактировать
-python bot.py
-
-```
-
-В консоли бот будет опрашивать Telegram-сервер раз в несколько секунд, и вы сразу сможете тестировать `/start`, `menu`, т.д. Но при этом **не нужен** никакой веб-сервер и сертификат.
-
----
-
-## 3. Автоматический запуск (systemd-сервис)
-
-Для **продакшена** удобно, чтобы бот автоматически запускался при старте сервера. Пример юнит-файла: `/etc/systemd/system/gptbot.service`:
+В корне проекта создайте `.env` со значениями ваших ключей:
 
 ```
 ini
-КопироватьРедактировать
+Копировать
+TELEGRAM_TOKEN=<Ваш_Токен_От_BotFather>
+PROXY_API_KEY=<Опционально: Key для Proxy API>
+
+# T-Kassa (Тинькофф):
+T_KASSA_TERMINAL_KEY=...
+T_KASSA_SECRET_KEY=...
+T_KASSA_API_URL=https://securepay.tinkoff.ru/v2
+
+# DB_URL, если хотите PostgreSQL или другой движок
+DB_URL=sqlite+aiosqlite:///./bot_storage.db
+
+```
+
+Все переменные считываются в `app/config.py`.
+
+### 1.4. (Опционально) Инициализировать или проверить базу (Alembic)
+
+Если вы используете SQLAlchemy + Alembic:
+
+```bash
+bash
+Копировать
+# Применить миграции, если есть alembic/
+alembic upgrade head
+
+```
+
+Либо, если у вас нет Alembic, но осталась поддержка старой `init_db()` (SQLite) — запустите её вручную или удалите.
+
+---
+
+## 2. Запуск бота напрямую (Polling или Webhook)
+
+### 2.1. Polling (упрощённый)
+
+1. В `app/main.py` или `bot.py` замените строку, ответственную за запуск, на что-то вроде:
+    
+    ```python
+    python
+    Копировать
+    application.run_polling()
+    
+    ```
+    
+2. Запустите:или
+    
+    ```bash
+    bash
+    Копировать
+    python -m app.main
+    
+    ```
+    
+    ```bash
+    bash
+    Копировать
+    python bot.py
+    
+    ```
+    
+3. Бот будет опрашивать Telegram. Подходит для локальной разработки.
+
+### 2.2. Webhook (Nginx + SSL)
+
+1. Настройте **Nginx** с HTTPS-доменом (например, `gribzergpt.ru`).
+2. Прокиньте `/bot` на локальный порт (см. [пример Nginx-конфига](https://github.com/gribzer/gribzer-telegram-gpt-bot#readme)).
+3. Убедитесь, что в `app/main.py` или `bot.py` вызывается:
+    
+    ```python
+    python
+    Копировать
+    application.run_webhook(
+        listen="127.0.0.1",
+        port=8000,
+        webhook_url="https://gribzergpt.ru/bot"
+    )
+    
+    ```
+    
+4. Запустите `python bot.py`. Telegram запросы по `https://gribzergpt.ru/bot` будут проксироваться внутрь на `127.0.0.1:8000`.
+
+---
+
+## 3. Запуск через Docker
+
+1. **Установите Docker** (см. Документация).
+2. Создайте/обновите файл **Dockerfile** (пример):
+    
+    ```
+    dockerfile
+    Копировать
+    FROM python:3.10-slim
+    WORKDIR /app
+    COPY requirements.txt .
+    RUN pip install --no-cache-dir -r requirements.txt
+    COPY . .
+    CMD ["python", "-m", "app.main"]
+    
+    ```
+    
+3. **Соберите** образ:
+    
+    ```bash
+    bash
+    Копировать
+    docker build -t my-bot:latest .
+    
+    ```
+    
+4. **Запустите** контейнер:
+    
+    ```bash
+    bash
+    Копировать
+    docker run -d -p 8000:8000 --name my-bot-container my-bot:latest
+    
+    ```
+    
+    - Если webhook (Nginx) на 443, Docker контейнер слушает 8000, а Nginx проксирует на `127.0.0.1:8000`.
+
+Проверяйте логи:
+
+```bash
+bash
+Копировать
+docker logs -f my-bot-container
+
+```
+
+---
+
+## 4. Структура проекта (обновлённая)
+
+Пример (может отличаться в деталях):
+
+```
+bash
+Копировать
+gribzer-telegram-gpt-bot/
+├── alembic/
+│   ├── env.py
+│   ├── script.py.mako
+│   └── versions/
+├── app/
+│   ├── __init__.py
+│   ├── config.py          # Загружает .env
+│   ├── main.py            # Точка входа (FastAPI или запуск PTB + webhook)
+│   ├── database/
+│   │   ├── __init__.py
+│   │   └── models.py      # SQLAlchemy модели
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── user_service.py
+│   │   ├── chat_service.py
+│   │   ├── payment_service.py
+│   │   └── subscription_service.py
+│   ├── telegram_bot/
+│   │   ├── __init__.py
+│   │   ├── bot.py         # Конфигурирует PTB Application
+│   │   ├── handlers/
+│   │   │   ├── __init__.py
+│   │   │   ├── menu.py
+│   │   │   ├── cabinet.py
+│   │   │   ├── payments.py
+│   │   │   ├── callbacks.py
+│   │   │   ├── conversation.py
+│   │   │   └── message_handler.py
+│   │   ├── utils.py
+│   │   └── proxyapi_client.py
+│   └── webhooks/
+│       ├── __init__.py
+│       └── tkassa_webhook.py   # FastAPI/Flask router для T-Kassa
+├── venv/                # Виртуальное окружение (исключено .gitignore)
+├── .env                 # Переменные окружения (TELEGRAM_TOKEN, DB_URL, ...)
+├── requirements.txt
+├── Dockerfile
+├── .gitignore
+└── README.md
+
+```
+
+---
+
+## 5. Личный кабинет, платежи и T-Касса
+
+- `handlers/cabinet.py` — показывает баланс, историю платежей, кнопки «пополнить через Telegram/T-Kassa».
+- `services/payment_service.py` — общие транзакции (create_transaction, complete_transaction), логика расчёта токенов за рубли и т. д.
+- `tkassa_webhook.py` — обработка уведомлений от Т-Кассы (через Flask или FastAPI).
+- `payments.py` — отправка Telegram Invoice, обработка `successful_payment`.
+
+---
+
+## 6. Запуск как systemd-сервис
+
+Для продакшена можно сделать systemd-юнит `/etc/systemd/system/mygptbot.service`:
+
+```
+ini
+Копировать
 [Unit]
 Description=GPT Telegram Bot
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/telegram_bot
-ExecStart=/opt/telegram_bot/venv/bin/python3 /opt/telegram_bot/bot.py
+WorkingDirectory=/opt/gribzer-telegram-gpt-bot
+ExecStart=/opt/gribzer-telegram-gpt-bot/venv/bin/python /opt/gribzer-telegram-gpt-bot/app/main.py
 Restart=always
-
-# Можно указать User=telegrambot (предварительно создав такого пользователя)
 
 [Install]
 WantedBy=multi-user.target
@@ -229,113 +261,41 @@ WantedBy=multi-user.target
 
 ```bash
 bash
-КопироватьРедактировать
+Копировать
 sudo systemctl daemon-reload
-sudo systemctl enable gptbot
-sudo systemctl start gptbot
-systemctl status gptbot
-
-```
-
-Если всё в порядке, получите `Active: active (running)`. Лог смотреть:
-
-```bash
-bash
-КопироватьРедактировать
-journalctl -u gptbot -f
-
-```
-
-При обновлении кода выполните:
-
-```bash
-bash
-КопироватьРедактировать
-sudo systemctl restart gptbot
+sudo systemctl enable mygptbot
+sudo systemctl start mygptbot
+systemctl status mygptbot
 
 ```
 
 ---
 
-## 4. Hot Reload при разработке
+## 7. Часто встречающиеся проблемы
 
-Systemd **не** умеет нативно отслеживать изменения файлов и перезапускать процесс. Для **быстрой разработки** без ручного рестарта можно использовать инструменты:
-
-- [**watchfiles**](https://github.com/samuelcolvin/watchfiles)
-    
-    ```bash
-    bash
-    КопироватьРедактировать
-    pip install watchfiles
-    python -m watchfiles --python=bot.py .
-    
-    ```
-    
-    При любом изменении `.py`-файла бот перезапустится автоматически.
-    
-- **entr**
-    
-    ```bash
-    bash
-    КопироватьРедактировать
-    ls *.py handlers/*.py | entr -r python3 bot.py
-    
-    ```
-    
-    Аналогичный принцип.
-    
-
-> В продакшене, наоборот, предпочитают статичный запуск через systemd и делают обновления вручную (deploy + systemctl restart).
-> 
+1. **Import "X" could not be resolved**
+    - Убедитесь, что установлены библиотеки (docker, flask, fastapi, sqlalchemy, и т.п.), а также что в `.env` всё прописано и **VSCode** использует верное виртуальное окружение.
+2. **Ошибка SSL** при webhook
+    - Настройте Nginx (сертификат Let’s Encrypt). В коде бота укажите `webhook_url="https://<ваш.домен>/bot"`.
+3. **OSError: [Errno 98] Address already in use**
+    - Порт 8000 уже занят другим процессом. Измените порт или остановите конфликтующий сервис.
+4. **SQLite locked**
+    - Проверьте, не держит ли какой-то процесс БД в write-режиме. Рекомендуется PostgreSQL, если много пользователей.
 
 ---
 
-## 5. Особые моменты
+## 8. Быстрый список команд бота
 
-1. **Переменные окружения**: кроме `TELEGRAM_TOKEN`, можно задать `PROXY_API_KEY`. Если вы не используете внешний proxyapi, оставьте пустым.
-2. **Пер_MESSAGE_WARNINGS**:
-    
-    Вы можете видеть предупреждения вроде:
-    
-    ```
-    rust
-    КопироватьРедактировать
-    PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked for every message.
-    
-    ```
-    
-    Это не фатально. Если для ConversationHandler вас устраивает поведение `per_message=False`, можно игнорировать предупреждения. Или сделать `per_message=True`, но тогда все обработчики должны быть `CallbackQueryHandler`.
-    
-3. **Database**: По умолчанию бот хранит данные в `bot_storage.db` (см. `DB_PATH` в `config.py`). Убедитесь, что у процесса есть права на запись.
-4. **Обновление кода**: При каждом изменении логики нужно перезапустить бот (или настроить hot reload в dev-режиме).
+1. `/start` — Приветствие.
+2. `/menu` — Главное меню (чаты, модели, инструкции).
+3. `/cabinet` — Личный кабинет (баланс, подписка).
+4. `/help` — Справка.
 
 ---
 
-## 6. Структура проекта (кратко)
+## 9. Заключение
 
-- `bot.py`: Точка входа (запуск бота, регистрация хендлеров, webhook или polling).
-- `config.py`: Чтение `.env`, базовые настройки.
-- `db.py`: Логика инициализации/апгрейда SQLite.
-- `handlers/`: Модули-обработчики:
-    - `menu.py`, `callbacks.py`, `conversation.py`, ...
-- `handle_message.py`: Обработка текстовых сообщений.
-
----
-
-## 7. Быстрый старт
-
-1. Склонировать репо и установить зависимости.
-2. Создать `.env` с `TELEGRAM_TOKEN=...`.
-3. (Опционально) Настроить Nginx + SSL, если хотите webhook. Иначе используйте `run_polling()`.
-4. Запустить:
-    
-    ```bash
-    bash
-    КопироватьРедактировать
-    python bot.py
-    
-    ```
-    
-5. Открыть Telegram, найти бота, ввести `/start`. Должен отвечать.
-
-Если что-то не работает, смотрите логи в консоли или `journalctl -u <service>`.
+- **Структура**: В проекте выделены модули для бота (`telegram_bot`), базы (`database` + Alembic), сервисный слой (`services`), вебхуки (`webhooks`).
+- **Конфигурация**: `.env` хранит токены и ключи. `config.py` их загружает.
+- **Запуск**: либо напрямую (polling/webhook), либо в Docker, либо под supervisord/systemd.
+- **Расширяемость**: можно подключить новые API (GPT/Claude/и т.д.), новые способы оплаты, добавлять подписочные модели.

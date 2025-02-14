@@ -1,4 +1,5 @@
-# handlers/conversation.py
+# app/telegram_bot/handlers/conversation.py
+
 import logging
 from telegram import Update
 from telegram.ext import (
@@ -9,53 +10,25 @@ from telegram.ext import (
     filters
 )
 
-from config import (
-    SET_INSTRUCTIONS,
+from app.config import (
     SET_NEW_CHAT_TITLE,
     SET_RENAME_CHAT
 )
-from db import (
-    set_user_instructions,
-    create_new_chat,
-    set_active_chat_id,
-    rename_chat
-)
-from handlers.menu import menu_command
+from app.telegram_bot.handlers.menu import menu_command
+
+# Импортируем сервисы
+from app.services.chat_service import create_chat, rename_chat
+from app.services.user_service import set_active_chat_id, set_user_instructions
 
 logger = logging.getLogger(__name__)
-
-# --------------------------------------------------
-#  (A) СТАРЫЙ вариант "Инструкции" — сразу ввод
-# --------------------------------------------------
-async def update_instructions_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Если пользователь нажимает "Инструкции" по старой логике,
-    сразу просим ввести текст.
-    """
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("Пожалуйста, отправьте новые инструкции (или /cancel для отмены):")
-    return SET_INSTRUCTIONS
-
-async def receive_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text.strip()
-    if user_text.lower() in ["меню", "назад", "отмена", "/cancel"]:
-        await update.message.reply_text("Обновление инструкций отменено.")
-        await menu_command(update, context)
-        return ConversationHandler.END
-
-    chat_id = update.effective_chat.id
-    set_user_instructions(chat_id, user_text)
-
-    await update.message.reply_text("Инструкции обновлены!")
-    await menu_command(update, context)
-    return ConversationHandler.END
-
 
 # --------------------------------------------------
 #  (B) СОЗДАНИЕ НОВОГО ЧАТА
 # --------------------------------------------------
 async def new_chat_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Начинает диалог по созданию нового чата: просим ввести название.
+    """
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("Введите название нового чата (или /cancel для отмены):")
@@ -63,6 +36,9 @@ async def new_chat_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SET_NEW_CHAT_TITLE
 
 async def set_new_chat_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Принимает введённое название и создаёт новый чат в БД.
+    """
     user_text = update.message.text.strip()
     if user_text.lower() in ["/cancel", "отмена", "назад"]:
         await update.message.reply_text("Создание чата отменено.")
@@ -70,10 +46,19 @@ async def set_new_chat_title(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
     chat_id = update.effective_chat.id
-    new_chat_id = create_new_chat(chat_id, user_text)
-    set_active_chat_id(chat_id, new_chat_id)
+    session_factory = context.application.bot_data.get("session_factory")
+    if not session_factory:
+        logger.error("No session_factory found in bot_data. Can't create chat.")
+        await update.message.reply_text("Ошибка: нет подключения к БД.")
+        return ConversationHandler.END
 
-    await update.message.reply_text(f"Чат создан и выбран в качестве активного! (ID: {new_chat_id})")
+    async with session_factory() as session:
+        # Создаём чат
+        new_chat_obj = await create_chat(session, user_id=chat_id, title=user_text)
+        # Назначаем его активным для пользователя
+        await set_active_chat_id(session, chat_id, new_chat_obj.id)
+
+    await update.message.reply_text(f"Чат создан и выбран в качестве активного! (ID: {new_chat_obj.id})")
     await menu_command(update, context)
     return ConversationHandler.END
 
@@ -81,6 +66,9 @@ async def set_new_chat_title(update: Update, context: ContextTypes.DEFAULT_TYPE)
 #  (C) ПЕРЕИМЕНОВАНИЕ ЧАТА
 # --------------------------------------------------
 async def rename_chat_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Начинает диалог: просим новое название чата.
+    """
     query = update.callback_query
     await query.answer()
 
@@ -92,6 +80,9 @@ async def rename_chat_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SET_RENAME_CHAT
 
 async def rename_chat_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Принимает новое название и переименовывает чат в БД.
+    """
     user_text = update.message.text.strip()
     if user_text.lower() in ["/cancel", "отмена", "назад"]:
         await update.message.reply_text("Переименование отменено.")
@@ -104,7 +95,15 @@ async def rename_chat_finish(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await menu_command(update, context)
         return ConversationHandler.END
 
-    rename_chat(chat_db_id, user_text)
+    session_factory = context.application.bot_data.get("session_factory")
+    if not session_factory:
+        logger.error("No session_factory found. Can't rename chat.")
+        await update.message.reply_text("Ошибка: нет подключения к БД.")
+        return ConversationHandler.END
+
+    async with session_factory() as session:
+        await rename_chat(session, chat_db_id, user_text)
+
     await update.message.reply_text(f"Чат {chat_db_id} переименован!")
     await menu_command(update, context)
     return ConversationHandler.END
@@ -148,8 +147,14 @@ async def instructions_input_finish(update: Update, context: ContextTypes.DEFAUL
         return ConversationHandler.END
 
     chat_id = update.effective_chat.id
-    # Сохраняем (логика add/edit одинакова)
-    set_user_instructions(chat_id, user_text)
+    session_factory = context.application.bot_data.get("session_factory")
+    if not session_factory:
+        logger.error("No session_factory found in bot_data. Can't set instructions.")
+        await update.message.reply_text("Ошибка: нет подключения к БД.")
+        return ConversationHandler.END
+
+    async with session_factory() as session:
+        await set_user_instructions(session, chat_id, user_text)
 
     await update.message.reply_text("Инструкции успешно сохранены!")
     await menu_command(update, context)

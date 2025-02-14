@@ -1,7 +1,7 @@
 # proxyapi_client.py
 
 import httpx
-from config import PROXY_API_KEY, TIMEOUT
+from app.config import PROXY_API_KEY, TIMEOUT
 
 # Базовый URL к proxyapi (если у вас OpenAI-совместимые методы)
 BASE_URL = "https://api.proxyapi.ru/openai/v1"
@@ -12,7 +12,7 @@ AVAILABLE_MODELS = []
 def _make_headers() -> dict:
     """Возвращает заголовки для запросов к proxyapi."""
     return {
-        "Authorization": f"Bearer {PROXY_API_KEY}",
+        "Authorization": f"Bearer {PROXY_API_KEY}" if PROXY_API_KEY else "",
         "Content-Type": "application/json",
     }
 
@@ -43,7 +43,6 @@ def fetch_available_models() -> list:
         models = [m["id"] for m in data.get("data", []) if "id" in m]
         return models
 
-
 def create_chat_completion(
     model: str,
     messages: list,
@@ -55,8 +54,9 @@ def create_chat_completion(
     # Доп. параметры, если нужно
 ) -> dict:
     """
-    Запрос к /v1/chat/completions на proxyapi. 
-    Возвращает JSON-ответ. Пример:
+    Запрос к /v1/chat/completions на proxyapi.
+    Возвращает JSON-ответ (пример ответа как у OpenAI).
+    Пример структуры ответа:
     {
       "id": "chatcmpl-1234",
       "object": "chat.completion",
@@ -80,10 +80,17 @@ def create_chat_completion(
         resp.raise_for_status()
         return resp.json()
 
-
 def create_embedding(model: str, input_data: str | list) -> dict:
     """
     Запрос к /v1/embeddings. Возвращает JSON, содержащий эмбеддинги.
+    Пример ответа:
+    {
+      "object": "list",
+      "data": [
+        {"object": "embedding", "embedding": [...], "index": 0}
+      ],
+      ...
+    }
     """
     url = f"{BASE_URL}/embeddings"
     payload = {
@@ -95,7 +102,6 @@ def create_embedding(model: str, input_data: str | list) -> dict:
         resp.raise_for_status()
         return resp.json()
 
-
 def upload_file(file_path: str, purpose: str = "fine-tune") -> dict:
     """
     Запрос к /v1/files (загрузка файла).
@@ -105,27 +111,27 @@ def upload_file(file_path: str, purpose: str = "fine-tune") -> dict:
         with open(file_path, "rb") as f:
             files = {"file": (file_path, f, "application/octet-stream")}
             data = {"purpose": purpose}
-            resp = client.post(url, headers={"Authorization": f"Bearer {PROXY_API_KEY}"}, data=data, files=files)
+            resp = client.post(url, headers=_make_headers(), data=data, files=files)
             resp.raise_for_status()
             return resp.json()
-
 
 def generate_image(prompt: str, n: int = 1, size: str = "1024x1024") -> dict:
     """
     Пример для генерации изображений /v1/images/generations.
     """
     # Если для /images/ нужен другой base URL, поправьте на нужный.
-    url = f"{BASE_URL.rsplit('/chat', 1)[0]}/images/generations"
+    # Ниже используется rsplit, чтобы убрать '/chat' из BASE_URL,
+    # предполагая, что images/generations лежит на другом endpoint.
+    image_url = f"{BASE_URL.rsplit('/chat', 1)[0]}/images/generations"
     payload = {
         "prompt": prompt,
         "n": n,
         "size": size
     }
     with httpx.Client(timeout=TIMEOUT) as client:
-        resp = client.post(url, headers=_make_headers(), json=payload)
+        resp = client.post(image_url, headers=_make_headers(), json=payload)
         resp.raise_for_status()
         return resp.json()
-
 
 def transcribe_audio(file_path: str, model: str = "whisper-1") -> dict:
     """
@@ -136,6 +142,6 @@ def transcribe_audio(file_path: str, model: str = "whisper-1") -> dict:
         with open(file_path, "rb") as f:
             files = {"file": (file_path, f, "audio/mpeg")}
             data = {"model": model}
-            resp = client.post(url, headers={"Authorization": f"Bearer {PROXY_API_KEY}"}, data=data, files=files)
+            resp = client.post(url, headers=_make_headers(), data=data, files=files)
             resp.raise_for_status()
             return resp.json()
