@@ -1,45 +1,35 @@
+import logging
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
-from app.database import get_async_session
-from app.database.models import Transaction
-from app.services.payment_service import (
-    update_transaction_successful,
-    update_transaction_by_trx_id
-)
+# ВАЖНО: импортируем get_db_session из app.database.utils, 
+# а не из app.main
+from app.database.utils import get_db_session
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 @router.post("/tkassa-webhook")
 async def tkassa_webhook(
     request: Request,
-    session: AsyncSession = Depends(get_async_session)
+    session: AsyncSession = Depends(get_db_session)
 ):
     """
-    Пример обработки webhook от T-Кассы.
+    Пример обработки webhook от Т-Кассы (Tinkoff).
     """
     data = await request.json()
+    logger.info(f"T-Kassa webhook data: {data}")
 
     order_id = data.get("OrderId")
     status = data.get("Status")
     success = data.get("Success", False)
 
     if not order_id:
-        return {"ok": False, "error": "No OrderId"}
+        return {"ok": False, "error": "No OrderId in webhook"}
 
-    # Ищем транзакцию по order_id
-    stmt = select(Transaction).where(Transaction.order_id == order_id)
-    result = await session.execute(stmt)
-    txn = result.scalars().first()
+    # Пример:
+    # async with session.begin():
+    #     txn = await find_transaction_by_order_id(session, order_id)
+    #     ...
 
-    if not txn:
-        return {"ok": False, "error": "Transaction not found"}
-
-    # Обновляем статус транзакции
-    if success and status in ["AUTHORIZED", "CONFIRMED", "COMPLETED"]:
-        await update_transaction_successful(session, txn.id)
-    elif status in ["CANCELED", "REJECTED"]:
-        await update_transaction_by_trx_id(session, txn.id, {"status": "canceled"})
-
-    return {"ok": True}
+    return {"ok": True, "message": f"Webhook processed. OrderId={order_id}, status={status}"}

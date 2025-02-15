@@ -1,5 +1,3 @@
-# app/telegram_bot/handlers/payments.py
-
 import logging
 from telegram import Update, LabeledPrice
 from telegram.ext import ContextTypes
@@ -18,7 +16,7 @@ async def send_invoice_to_user(update: Update, context: ContextTypes.DEFAULT_TYP
     Создаём Invoice для оплаты через Telegram.
     """
     query = update.callback_query
-    chat_id = query.message.chat.id
+    chat_id = update.effective_chat.id  # предпочтительнее, чем query.message.chat.id
 
     # Допустим, хотим выставить 100 руб
     amount_rub = 100
@@ -46,12 +44,12 @@ async def send_invoice_to_user(update: Update, context: ContextTypes.DEFAULT_TYP
     description = f"Транзакция #{txn_id}. {amount_rub} руб."
     prices = [LabeledPrice(label="Баланс", amount=int(amount_rub * 100))]
 
-    # Отправляем Invoice
-    await query.message.bot.send_invoice(
+    # Отправляем Invoice через context.bot
+    await context.bot.send_invoice(
         chat_id=chat_id,
         title=title,
         description=description,
-        payload=str(txn_id),  # передаём ID транзакции
+        payload=str(txn_id),  # передаём ID транзакции в payload
         provider_token=PROVIDER_TOKEN,
         currency="RUB",
         prices=prices,
@@ -72,8 +70,7 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
     Обработка успешной оплаты.
     """
     payment_info = update.message.successful_payment
-    payload = payment_info.invoice_payload
-    # payload – это txn_id (строка)
+    payload = payment_info.invoice_payload  # txn_id в строковом виде
     txn_id = int(payload)
 
     # Берём session_factory

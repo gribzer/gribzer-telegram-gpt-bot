@@ -9,10 +9,11 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 PROXY_API_KEY = os.getenv('PROXY_API_KEY')
 
 # ========== T-Касса / Tinkoff ==========
-T_KASSA_TERMINAL_KEY = os.getenv("T_KASSA_TERMINAL_KEY")
-T_KASSA_SECRET_KEY = os.getenv("T_KASSA_SECRET_KEY")
-T_KASSA_PASSWORD = os.getenv("T_KASSA_PASSWORD")  # Не всегда нужно, зависит от схемы
+T_KASSA_TERMINAL = os.getenv("T_KASSA_TERMINAL", "")
+T_KASSA_SECRET_KEY = os.getenv("T_KASSA_SECRET_KEY", "")
+T_KASSA_PASSWORD = os.getenv("T_KASSA_PASSWORD", "")
 T_KASSA_API_URL = os.getenv("T_KASSA_API_URL", "https://securepay.tinkoff.ru/v2")
+T_KASSA_IS_TEST = os.getenv("T_KASSA_IS_TEST", "False").lower() == "true"
 
 # ========== База данных ==========
 # Пример: "sqlite+aiosqlite:///./bot_storage.db"

@@ -1,6 +1,8 @@
 # app/telegram_bot/bot.py
 
 import logging
+import os
+
 from telegram import BotCommand, MenuButtonCommands
 from telegram.ext import (
     Application,
@@ -38,9 +40,9 @@ logger = logging.getLogger(__name__)
 async def create_telegram_application(session_factory=None) -> Application:
     """
     Создаёт и настраивает экземпляр PTB Application (Telegram-бот).
-    :param session_factory: (опционально) фабрика AsyncSession, 
+    :param session_factory: (опционально) фабрика AsyncSession,
                             если вам нужно работать с БД из хендлеров.
-    :return: сконфигурированный объект Application, который можно 
+    :return: сконфигурированный объект Application, который можно
              запускать (polling или webhook) в другом месте.
     """
 
@@ -111,7 +113,7 @@ async def create_telegram_application(session_factory=None) -> Application:
     # Хендлер на обычное текстовое сообщение
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message))
 
-    # 3. Регистрируем команды и меню
+    # 3. Регистрируем команды и кнопку меню
     commands = [
         BotCommand("start", "Запустить бота"),
         BotCommand("menu", "Показать главное меню"),
@@ -119,13 +121,19 @@ async def create_telegram_application(session_factory=None) -> Application:
         BotCommand("cabinet", "Личный кабинет")
     ]
 
-    # Устанавливаем команды и кнопку меню
     async def setup_bot_commands(app: Application):
+        # Устанавливаем команды
         await app.bot.set_my_commands(commands)
-        await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+
+        # Явно устанавливаем MenuButtonCommands для всех приватных чатов
+        await app.bot.set_chat_menu_button(
+            chat_id=None,
+            menu_button=MenuButtonCommands()
+        )
         logger.info("Команды бота и кнопка меню установлены.")
 
-    # Вызываем настройку команд немедленно (либо по желанию после .startup())
+
+    # Запускаем настройку команд сразу
     await setup_bot_commands(application)
 
     # 4. Возвращаем готовое приложение

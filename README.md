@@ -29,23 +29,24 @@ pip install -r requirements.txt
 
 ```
 
-> Примечание: если используете async webhook для PTB, убедитесь, что python-telegram-bot[webhooks] установился корректно.
+> Примечание: если используете async webhook для PTB, убедитесь, что python-telegram-bot[webhooks] тоже установился корректно.
 > 
 
 ### 1.3. Создать и заполнить файл `.env`
 
-В корне проекта создайте `.env` со значениями ваших ключей:
+В корне проекта создайте `.env` со значениями ваших ключей. Пример:
 
 ```
 TELEGRAM_TOKEN=<Ваш_Токен_От_BotFather>
 PROXY_API_KEY=<Опционально: Key для Proxy API>
 
-# T-Kassa (Тинькофф):
-T_KASSA_TERMINAL_KEY=...
+# T-Касса (Tinkoff)
+T_KASSA_TERMINAL_KEY=...DEMO
+T_KASSA_PASSWORD=...
 T_KASSA_SECRET_KEY=...
 T_KASSA_API_URL=https://securepay.tinkoff.ru/v2
+T_KASSA_IS_TEST=True
 
-# DB_URL, если хотите PostgreSQL или другой движок
 DB_URL=sqlite+aiosqlite:///./bot_storage.db
 
 ```
@@ -57,12 +58,12 @@ DB_URL=sqlite+aiosqlite:///./bot_storage.db
 Если вы используете SQLAlchemy + Alembic:
 
 ```bash
-# Применить миграции, если есть alembic/
+# Применить миграции (если у вас настроен alembic)
 alembic upgrade head
 
 ```
 
-Либо, если у вас нет Alembic, но осталась поддержка старой `init_db()` (SQLite) — запустите её вручную или удалите.
+Либо, если у вас нет Alembic, — используйте автогенерацию таблиц или другую схему.
 
 ---
 
@@ -70,51 +71,44 @@ alembic upgrade head
 
 ### 2.1. Polling (упрощённый)
 
-1. В `app/main.py` или `bot.py` замените строку, ответственную за запуск, на что-то вроде:
+1. Убедитесь, что в `app/main.py` включено:
     
     ```python
-    application.run_polling()
+    # По умолчанию проект уже настроен на Lifespan + run_polling
+    # через PTB, см. код.
     
     ```
     
-2. Запустите:или
+2. Запустите:
     
     ```bash
     python -m app.main
     
     ```
     
+3. Бот будет опрашивать Telegram в консоли. Подходит для локальной разработки.
+
+### 2.2. Webhook (через Nginx/HTTPS)
+
+1. Настройте Nginx с HTTPS-доменом (например, `gribzergpt.ru`).
+2. Прокиньте нужный путь (`/bot`) на локальный порт, где слушает ваш бот.
+3. В коде бота (`app/main.py` или `bot.py`) используйте `run_webhook(...)` вместо `run_polling()` (или lifespan-обработку webhook).
+4. Запустите:Telegram будет слать запросы на `https://ваш.домен/bot`, Nginx проксирует их к вашему приложению.
+    
     ```bash
-
-    python bot.py
+    bash
+    КопироватьРедактировать
+    python -m app.main
     
     ```
     
-3. Бот будет опрашивать Telegram. Подходит для локальной разработки.
-
-### 2.2. Webhook (Nginx + SSL)
-
-1. Настройте **Nginx** с HTTPS-доменом (например, `gribzergpt.ru`).
-2. Прокиньте `/bot` на локальный порт (см. [пример Nginx-конфига](https://github.com/gribzer/gribzer-telegram-gpt-bot#readme)).
-3. Убедитесь, что в `app/main.py` или `bot.py` вызывается:
-    
-    ```python
-    application.run_webhook(
-        listen="127.0.0.1",
-        port=8000,
-        webhook_url="https://gribzergpt.ru/bot"
-    )
-    
-    ```
-    
-4. Запустите `python bot.py`. Telegram запросы по `https://gribzergpt.ru/bot` будут проксироваться внутрь на `127.0.0.1:8000`.
 
 ---
 
 ## 3. Запуск через Docker
 
-1. **Установите Docker** (см. Документация).
-2. Создайте/обновите файл **Dockerfile** (пример):
+1. Установите Docker (см. официальную документацию).
+2. В корне проекта проверьте/обновите **Dockerfile** (пример):
     
     ```
     FROM python:3.10-slim
@@ -126,29 +120,20 @@ alembic upgrade head
     
     ```
     
-3. **Соберите** образ:
+3. Соберите образ:
     
     ```bash
     docker build -t my-bot:latest .
     
     ```
     
-4. **Запустите** контейнер:
+4. Запустите контейнер:Проверяйте логи через `docker logs -f my-bot-container`.При webhook + Nginx — Nginx на 443, контейнер слушает 8000.
     
     ```bash
     docker run -d -p 8000:8000 --name my-bot-container my-bot:latest
     
     ```
     
-    - Если webhook (Nginx) на 443, Docker контейнер слушает 8000, а Nginx проксирует на `127.0.0.1:8000`.
-
-Проверяйте логи:
-
-```bash
-
-docker logs -f my-bot-container
-
-```
 
 ---
 
@@ -165,7 +150,7 @@ gribzer-telegram-gpt-bot/
 ├── app/
 │   ├── __init__.py
 │   ├── config.py          # Загружает .env
-│   ├── main.py            # Точка входа (FastAPI или запуск PTB + webhook)
+│   ├── main.py            # Точка входа (FastAPI + PTB)
 │   ├── database/
 │   │   ├── __init__.py
 │   │   └── models.py      # SQLAlchemy модели
@@ -180,17 +165,17 @@ gribzer-telegram-gpt-bot/
 │   │   ├── bot.py         # Конфигурирует PTB Application
 │   │   ├── handlers/
 │   │   │   ├── __init__.py
-│   │   │   ├── menu.py
-│   │   │   ├── cabinet.py
-│   │   │   ├── payments.py
+│   │   │   ├── menu.py            # Главное меню
+│   │   │   ├── cabinet.py         # Личный кабинет, оплатa
+│   │   │   ├── payments.py        # Telegram Invoices
 │   │   │   ├── callbacks.py
-│   │   │   ├── conversation.py
+│   │   │   ├── conversation.py    # ConversationHandler (new_chat, rename_chat, etc.)
 │   │   │   └── message_handler.py
 │   │   ├── utils.py
 │   │   └── proxyapi_client.py
 │   └── webhooks/
 │       ├── __init__.py
-│       └── tkassa_webhook.py   # FastAPI/Flask router для T-Kassa
+│       └── tkassa_webhook.py   # Router для T-Кассы (FastAPI)
 ├── venv/                # Виртуальное окружение (исключено .gitignore)
 ├── .env                 # Переменные окружения (TELEGRAM_TOKEN, DB_URL, ...)
 ├── requirements.txt
@@ -204,26 +189,38 @@ gribzer-telegram-gpt-bot/
 
 ## 5. Личный кабинет, платежи и T-Касса
 
-- `handlers/cabinet.py` — показывает баланс, историю платежей, кнопки «пополнить через Telegram/T-Kassa».
-- `services/payment_service.py` — общие транзакции (create_transaction, complete_transaction), логика расчёта токенов за рубли и т. д.
-- `tkassa_webhook.py` — обработка уведомлений от Т-Кассы (через Flask или FastAPI).
-- `payments.py` — отправка Telegram Invoice, обработка `successful_payment`.
+- **`handlers/cabinet.py`**:Показывает баланс, историю платежей, кнопки пополнения (через T-Kassa или Telegram Invoice).
+- **`payment_service.py`**:Общая логика транзакций (create_transaction, complete_transaction, расчёт токенов за рубли и т. д.).
+- **`tkassa_webhook.py`**:Вебхук для уведомлений от T-Кассы (Tinkoff). Приходит JSON с `OrderId`, `Status`, `Success`.
+- **`payments.py`**:Логика Telegram-инвойсов (PreCheckoutQuery, successful_payment).
 
 ---
 
-## 6. Запуск как systemd-сервис
+## 6. Частые проблемы
 
-Для продакшена можно сделать systemd-юнит `/etc/systemd/system/mygptbot.service`:
+1. **ImportError / circular import**
+    - Внимательно следите за архитектурой. Если `tkassa_webhook.py` импортирует что-то из `main.py`, а `main.py` импортирует `tkassa_webhook.py`, может возникнуть цикл. Решение: вынести общие функции (например, `get_db_session`) в отдельный модуль (например, `app/database/utils.py`).
+2. **PTBUserWarning: If 'per_message=False', 'CallbackQueryHandler' will not be tracked**
+    - Если внутри `ConversationHandler` вы хотите ловить `CallbackQueryHandler` «на каждое сообщение», установите `per_message=True`. Если не нужно, можно игнорировать предупреждение.
+3. **No OrderId / `Invalid args for response field!`** при FastAPI
+    - Убирайте `session: AsyncSession` из сигнатуры эндпоинта, либо используйте `Depends(...)`.
+
+---
+
+## 7. Запуск под systemd (опционально)
+
+Для продакшена можно создать service-файл `/etc/systemd/system/gribzer-gptbot.service`:
 
 ```
 [Unit]
-Description=GPT Telegram Bot
+Description=Gribzer GPT Bot
 After=network.target
 
 [Service]
 Type=simple
+User=<youruser>
 WorkingDirectory=/opt/gribzer-telegram-gpt-bot
-ExecStart=/opt/gribzer-telegram-gpt-bot/venv/bin/python /opt/gribzer-telegram-gpt-bot/app/main.py
+ExecStart=/opt/gribzer-telegram-gpt-bot/venv/bin/python -m app.main
 Restart=always
 
 [Install]
@@ -235,39 +232,31 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable mygptbot
-sudo systemctl start mygptbot
-systemctl status mygptbot
+sudo systemctl enable gribzer-gptbot
+sudo systemctl start gribzer-gptbot
+systemctl status gribzer-gptbot
 
 ```
 
 ---
 
-## 7. Часто встречающиеся проблемы
+## 8. Краткий список команд бота
 
-1. **Import "X" could not be resolved**
-    - Убедитесь, что установлены библиотеки (docker, flask, fastapi, sqlalchemy, и т.п.), а также что в `.env` всё прописано и **VSCode** использует верное виртуальное окружение.
-2. **Ошибка SSL** при webhook
-    - Настройте Nginx (сертификат Let’s Encrypt). В коде бота укажите `webhook_url="https://<ваш.домен>/bot"`.
-3. **OSError: [Errno 98] Address already in use**
-    - Порт 8000 уже занят другим процессом. Измените порт или остановите конфликтующий сервис.
-4. **SQLite locked**
-    - Проверьте, не держит ли какой-то процесс БД в write-режиме. Рекомендуется PostgreSQL, если много пользователей.
+- `/start` — Приветственное сообщение.
+- `/menu` — Главное меню (inline-кнопки).
+- `/cabinet` — Личный кабинет (баланс, платежи, подписка).
+- `/help` — Справка.
 
----
-
-## 8. Быстрый список команд бота
-
-1. `/start` — Приветствие.
-2. `/menu` — Главное меню (чаты, модели, инструкции).
-3. `/cabinet` — Личный кабинет (баланс, подписка).
-4. `/help` — Справка.
+При желании можете расширять функционал (например, добавить `/newchat`, `/renamechat`), привязать хендлеры в `bot.py`.
 
 ---
 
 ## 9. Заключение
 
-- **Структура**: В проекте выделены модули для бота (`telegram_bot`), базы (`database` + Alembic), сервисный слой (`services`), вебхуки (`webhooks`).
-- **Конфигурация**: `.env` хранит токены и ключи. `config.py` их загружает.
-- **Запуск**: либо напрямую (polling/webhook), либо в Docker, либо под supervisord/systemd.
-- **Расширяемость**: можно подключить новые API (GPT/Claude/и т.д.), новые способы оплаты, добавлять подписочные модели.
+- **Проект** предоставляет гибкий Telegram-бот (PTB) с FastAPI (в `main.py`) и поддержкой T-Кассы, Telegram Payments, SQLite/Postgres.
+- **.env** хранит конфиденциальные переменные (токен бота, ключи T-Кассы, URL БД).
+- **Деплой**: либо Docker (контейнер со всем кодом), либо systemd на VPS (с Nginx или polling).
+- **Сборка и обновление**:
+    - `pip install -r requirements.txt`,
+    - `alembic upgrade head` (если миграции),
+    - `python -m app.main` или `docker build ...`.

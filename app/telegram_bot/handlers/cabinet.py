@@ -78,8 +78,7 @@ async def cabinet_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
     if data == "cabinet_topup":
         kb = [
-            [InlineKeyboardButton("Оплатить через T-Кассу", callback_data="cabinet_pay_tkassa")],
-            [InlineKeyboardButton("Оплатить через Telegram", callback_data="cabinet_pay_telegram")],
+            [InlineKeyboardButton("Оплатить через T-Кассу", callback_data="cabinet_pay_tkassa"), InlineKeyboardButton("Оплатить через Telegram", callback_data="cabinet_pay_telegram")],
             [InlineKeyboardButton("Назад", callback_data="show_cabinet")]
         ]
         await query.edit_message_text(
@@ -97,6 +96,7 @@ async def cabinet_callback_handler(update: Update, context: ContextTypes.DEFAULT
             return
 
         async with session_factory() as session:
+            # Предположим, метод get_user_transactions теперь умеет принимать limit
             txns = await get_user_transactions(session, chat_id, limit=5)
 
         if not txns:
@@ -191,9 +191,16 @@ async def cabinet_callback_handler(update: Update, context: ContextTypes.DEFAULT
         await show_cabinet(update, context)
         return
 
+    elif data == "back_to_menu":
+        # Возвращаемся в главное меню
+        from app.telegram_bot.handlers.menu import menu_command
+        await menu_command(update, context)
+        return
+
     else:
         await query.edit_message_text("Неизвестная команда кнопки.")
         return
+
 
 # ------------------------------------------------------------------------------
 # Вспомогательная функция, чтобы получить пользователя из БД,

@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes
 
 from app.services.user_service import get_active_chat_id, get_user_model
 from app.services.chat_service import get_user_chats, get_chat_title
+
 logger = logging.getLogger(__name__)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -53,10 +54,11 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         keyboard = [
             [InlineKeyboardButton("❓ Помощь", callback_data="help")],
-            [InlineKeyboardButton("🏦 Личный кабинет", callback_data="cabinet_main")],
+            [InlineKeyboardButton("🏦 Личный кабинет", callback_data="show_cabinet")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        # Редактируем/отправляем ответ
+
+        # Редактируем или отправляем новое сообщение
         if update.message:
             await update.message.reply_text(main_text, reply_markup=reply_markup)
         else:
@@ -87,18 +89,18 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
             InlineKeyboardButton("📑 Все чаты", callback_data="all_chats"),
-            InlineKeyboardButton("⭐ Избранные чаты", callback_data="favorite_chats"),
+            InlineKeyboardButton("⭐ Избранное", callback_data="favorite_chats"),
         ],
         [
             InlineKeyboardButton("🤖 Сменить модель", callback_data="change_model"),
-            InlineKeyboardButton("💬 История текущего чата", callback_data="history_current_chat"),
+            InlineKeyboardButton("💬 История чата", callback_data="history_current_chat"),
         ],
         [
             InlineKeyboardButton("📝 Инструкции", callback_data="update_instructions"),
-            InlineKeyboardButton("❓ Помощь", callback_data="help"),
+            InlineKeyboardButton("🏦 Личный кабинет", callback_data="show_cabinet"),
         ],
         [
-            InlineKeyboardButton("🏦 Личный кабинет", callback_data="cabinet_main")
+            InlineKeyboardButton("❓ Помощь", callback_data="help")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
