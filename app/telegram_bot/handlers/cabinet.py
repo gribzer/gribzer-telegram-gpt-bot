@@ -1,10 +1,14 @@
 # app/telegram_bot/handlers/cabinet.py
 
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto
+)
 from telegram.ext import ContextTypes
 
-# Импортируем сервисы
 from app.services.payment_service import (
     get_user_transactions,
     create_transaction,
@@ -19,9 +23,10 @@ logger = logging.getLogger(__name__)
 
 async def show_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Показывает личный кабинет: баланс пользователя, подписку, кнопки "пополнить" и "история".
+    Показывает личный кабинет с обложкой Cabinet.png
     """
-    # Определяем chat_id
+    cover_path = "app/telegram_bot/images/Cabinet.png"
+
     if update.callback_query:
         query = update.callback_query
         await query.answer()
@@ -29,20 +34,18 @@ async def show_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         chat_id = update.effective_chat.id
 
-    # Получаем фабрику сессий (session_factory), которую мы сохранили в bot_data при запуске бота
     session_factory = context.application.bot_data.get("session_factory")
     if not session_factory:
-        logger.error("No session_factory found in bot_data. Database operations not possible.")
+        logger.error("No session_factory found in bot_data.")
         return
 
-    # Открываем AsyncSession, ищем пользователя, извлекаем баланс и статус подписки
+    # Получаем/создаём пользователя, смотрим баланс
     async with session_factory() as session:
         user = await _get_or_create_user(session, chat_id)
         balance = user.balance_tokens or 0
         subscription_active = user.subscription_status  # bool
         sub_text = "Активна" if subscription_active else "Нет"
 
-    # Формируем текст ответа
     text = (
         f"Личный кабинет\n\n"
         f"UID: `{chat_id}`\n"
@@ -50,45 +53,65 @@ async def show_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Подписка: {sub_text}\n"
     )
 
-    kb = [
+    keyboard = [
         [InlineKeyboardButton("Пополнить баланс", callback_data="cabinet_topup")],
         [InlineKeyboardButton("История платежей", callback_data="cabinet_history")],
         [InlineKeyboardButton("Назад в меню", callback_data="back_to_menu")]
     ]
-    markup = InlineKeyboardMarkup(kb)
+    markup = InlineKeyboardMarkup(keyboard)
+
+    caption_text = text  # Пойдёт в caption
 
     if update.callback_query:
-        await update.callback_query.edit_message_text(
-            text, reply_markup=markup, parse_mode="Markdown"
+        media = InputMediaPhoto(open(cover_path, "rb"), caption=caption_text, parse_mode="Markdown")
+        await update.callback_query.edit_message_media(
+            media=media,
+            reply_markup=markup
         )
     else:
-        await update.message.reply_text(
-            text, reply_markup=markup, parse_mode="Markdown"
-        )
+        with open(cover_path, "rb") as photo:
+            await update.message.reply_photo(
+                photo=photo,
+                caption=caption_text,
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+
 
 async def cabinet_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Общий callback-хендлер для inline-кнопок в личном кабинете: 
-    "Пополнить баланс", "История платежей", "Оплатить через T-Kассу", "Оплатить через Telegram".
+    Общий callback-хендлер для inline-кнопок в личном кабинете.
     """
     query = update.callback_query
     await query.answer()
     data = query.data
     chat_id = query.message.chat.id
 
+    # Для всех колбэков будем по умолчанию оставлять ту же «Cabinet.png»,
+    # но с разным caption. Если хотите разные картинки, меняйте cover_path.
+
+    cover_path = "app/telegram_bot/images/Cabinet.png"
+
     if data == "cabinet_topup":
-        kb = [
-            [InlineKeyboardButton("Оплатить через T-Кассу", callback_data="cabinet_pay_tkassa"), InlineKeyboardButton("Оплатить через Telegram", callback_data="cabinet_pay_telegram")],
+        text = "Выберите способ пополнения:"
+        keyboard = [
+            [
+                InlineKeyboardButton("Оплатить через T-Кассу", callback_data="cabinet_pay_tkassa"),
+                InlineKeyboardButton("Оплатить через Telegram", callback_data="cabinet_pay_telegram")
+            ],
             [InlineKeyboardButton("Назад", callback_data="show_cabinet")]
         ]
-        await query.edit_message_text(
-            "Выберите способ пополнения:",
-            reply_markup=InlineKeyboardMarkup(kb)
+        markup = InlineKeyboardMarkup(keyboard)
+
+        from telegram import InputMediaPhoto
+        media = InputMediaPhoto(open(cover_path, "rb"), caption=text)
+        await query.edit_message_media(
+            media=media,
+            reply_markup=markup
         )
         return
 
     elif data == "cabinet_history":
-        # Показываем последние 5 транзакций
         session_factory = context.application.bot_data.get("session_factory")
         if not session_factory:
             logger.error("No session_factory found in bot_data.")
@@ -96,7 +119,6 @@ async def cabinet_callback_handler(update: Update, context: ContextTypes.DEFAULT
             return
 
         async with session_factory() as session:
-            # Предположим, метод get_user_transactions теперь умеет принимать limit
             txns = await get_user_transactions(session, chat_id, limit=5)
 
         if not txns:
@@ -104,21 +126,20 @@ async def cabinet_callback_handler(update: Update, context: ContextTypes.DEFAULT
         else:
             lines = ["Последние транзакции:"]
             for t in txns:
-                lines.append(
-                    f"• ID {t.id} | {t.amount_rub}₽ => {t.tokens} токенов [{t.status}]"
-                )
+                lines.append(f"• ID {t.id} | {t.amount_rub}₽ => {t.tokens} токенов [{t.status}]")
             text = "\n".join(lines)
 
-        await query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Назад", callback_data="show_cabinet")]
-            ])
+        keyboard = [[InlineKeyboardButton("Назад", callback_data="show_cabinet")]]
+        markup = InlineKeyboardMarkup(keyboard)
+        media = InputMediaPhoto(open(cover_path, "rb"), caption=text)
+        await query.edit_message_media(
+            media=media,
+            reply_markup=markup
         )
         return
 
     elif data == "cabinet_pay_tkassa":
-        # Допустим, выставляем 100 руб
+        # Пример логики для T-Кассы
         amount_rub = 100
         tokens = calculate_tokens_for_amount(amount_rub)
 
@@ -132,7 +153,6 @@ async def cabinet_callback_handler(update: Update, context: ContextTypes.DEFAULT
             txn = await create_transaction(session, user_id=chat_id, amount_rub=amount_rub, tokens=tokens, method="T-Kassa")
             txn_id = txn.id
 
-        # Инициируем платёж через T-Кассу
         tk_client = TKassaClient()
         amount_coins = int(amount_rub * 100)
         order_id = f"order-{txn_id}"
@@ -148,12 +168,11 @@ async def cabinet_callback_handler(update: Update, context: ContextTypes.DEFAULT
             success = init_resp.get("Success", False)
             if not success:
                 message = init_resp.get("Message", "Ошибка при инициализации платежа")
-                await query.edit_message_text(
-                    f"Не удалось создать платёж: {message}",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("Назад", callback_data="show_cabinet")]
-                    ])
-                )
+                text = f"Не удалось создать платёж: {message}"
+                keyboard = [[InlineKeyboardButton("Назад", callback_data="show_cabinet")]]
+                markup = InlineKeyboardMarkup(keyboard)
+                media = InputMediaPhoto(open(cover_path, "rb"), caption=text)
+                await query.edit_message_media(media=media, reply_markup=markup)
                 return
 
             payment_url = init_resp.get("PaymentURL")
@@ -162,51 +181,47 @@ async def cabinet_callback_handler(update: Update, context: ContextTypes.DEFAULT
                 f"Транзакция #{txn_id}\n\n"
                 f"[Оплатить >>>]({payment_url})"
             )
-            await query.edit_message_text(
-                text,
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Назад", callback_data="show_cabinet")]
-                ])
-            )
+            keyboard = [[InlineKeyboardButton("Назад", callback_data="show_cabinet")]]
+            markup = InlineKeyboardMarkup(keyboard)
+            media = InputMediaPhoto(open(cover_path, "rb"), caption=text, parse_mode="Markdown")
+            await query.edit_message_media(media=media, reply_markup=markup)
 
         except Exception as e:
             logger.error(f"Ошибка при init_payment в T-Кассу: {e}", exc_info=True)
-            await query.edit_message_text(
-                "Ошибка при создании платежа. Попробуйте позже.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Назад", callback_data="show_cabinet")]
-                ])
-            )
+            text = "Ошибка при создании платежа. Попробуйте позже."
+            keyboard = [[InlineKeyboardButton("Назад", callback_data="show_cabinet")]]
+            markup = InlineKeyboardMarkup(keyboard)
+            media = InputMediaPhoto(open(cover_path, "rb"), caption=text)
+            await query.edit_message_media(media=media, reply_markup=markup)
         return
 
     elif data == "cabinet_pay_telegram":
-        # Запускаем Telegram Invoice (из другого модуля handlers.payments)
+        # Запуск Telegram Invoice (пример)
         from app.telegram_bot.handlers.payments import send_invoice_to_user
         await send_invoice_to_user(update, context)
         return
 
     elif data == "show_cabinet":
-        # Просто возвращаемся в кабинет
         await show_cabinet(update, context)
         return
 
     elif data == "back_to_menu":
-        # Возвращаемся в главное меню
         from app.telegram_bot.handlers.menu import menu_command
         await menu_command(update, context)
         return
 
     else:
-        await query.edit_message_text("Неизвестная команда кнопки.")
+        # Неизвестная кнопка
+        text = "Неизвестная команда кнопки."
+        media = InputMediaPhoto(open(cover_path, "rb"), caption=text)
+        await query.edit_message_media(media=media)
         return
 
 
-# ------------------------------------------------------------------------------
-# Вспомогательная функция, чтобы получить пользователя из БД,
-# создать его при необходимости
-# ------------------------------------------------------------------------------
 async def _get_or_create_user(session: AsyncSession, chat_id: int) -> User:
+    """
+    Вспомогательная функция: находит или создаёт User в БД.
+    """
     user_stmt = select(User).where(User.chat_id == chat_id)
     result = await session.execute(user_stmt)
     user = result.scalar_one_or_none()

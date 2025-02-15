@@ -2,7 +2,7 @@
 
 import logging
 import httpx
-from telegram import Update
+from telegram import Update, InputMediaPhoto
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 
@@ -33,6 +33,9 @@ from app.telegram_bot.utils import convert_to_telegram_markdown_v2
 
 logger = logging.getLogger(__name__)
 
+# Обложка для ответов бота (можно заменить на свой путь/имя файла)
+MESSAGE_COVER_PATH = "app/telegram_bot/images/Cabinet.png"
+
 async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Асинхронный хендлер на входящее текстовое сообщение.
@@ -61,7 +64,7 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if balance <= 0:
             # Нет токенов, проверим подписку
             if await has_active_subscription(user):
-                # Окей, пропускаем
+                # У пользователя активная подписка - можно отвечать
                 pass
             else:
                 # Проверяем бесплатный лимит
@@ -105,9 +108,8 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Сохраняем сообщение пользователя
         await add_message(session, active_chat_db_id, "user", user_text)
 
-    # 6. Запрос к Proxy API
+    # 6. Запрос к Proxy API (create_chat_completion)
     try:
-        # Параметры для модели
         response_data = create_chat_completion(
             model=selected_model,
             messages=messages_for_api,
@@ -129,13 +131,22 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     async with session_factory() as session:
         await add_message(session, active_chat_db_id, "assistant", answer)
 
-    # 8. Отправляем ответ
+    # 8. Отправляем ответ пользователю (картинка + подпись)
     formatted_answer = convert_to_telegram_markdown_v2(answer)
+
+    # Пытаемся отправить в MarkdownV2
     try:
-        await update.message.reply_text(
-            formatted_answer,
-            parse_mode="MarkdownV2"
-        )
+        with open(MESSAGE_COVER_PATH, "rb") as photo:
+            await update.message.reply_photo(
+                photo=photo,
+                caption=formatted_answer,
+                parse_mode="MarkdownV2"
+            )
     except BadRequest:
+        # Если ошибка при парсинге, отправим без форматирования
         logger.error("Ошибка при отправке MarkdownV2, отправляем без форматирования", exc_info=True)
-        await update.message.reply_text(answer)
+        with open(MESSAGE_COVER_PATH, "rb") as photo:
+            await update.message.reply_photo(
+                photo=photo,
+                caption=answer
+            )

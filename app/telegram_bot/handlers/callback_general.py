@@ -1,22 +1,15 @@
 # app/telegram_bot/handlers/callback_general.py
 
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto
+)
 from telegram.ext import ContextTypes, ConversationHandler
 
-# Предположим, вы создали user_service и chat_service:
-# user_service.py:
-#   async def get_user_instructions(session: AsyncSession, chat_id: int) -> str: ...
-#   async def set_user_instructions(session: AsyncSession, chat_id: int, text: str) -> None: ...
-#   async def set_user_model(session: AsyncSession, chat_id: int, model: str) -> None: ...
-#   async def get_user_model(session: AsyncSession, chat_id: int) -> str: ...
-#   async def get_active_chat_id(session: AsyncSession, chat_id: int) -> int: ...
-#   async def set_active_chat_id(session: AsyncSession, chat_id: int, chat_db_id: int) -> None: ...
-#
-# chat_service.py:
-#   async def delete_chat(session: AsyncSession, chat_db_id: int) -> None: ...
-#   async def set_chat_favorite(session: AsyncSession, chat_db_id: int, is_fav: bool) -> None: ...
-#
+# Сервисы user_service и chat_service
 from app.services.user_service import (
     get_user_instructions,
     set_user_instructions,
@@ -54,20 +47,27 @@ from app.config import (
 
 logger = logging.getLogger(__name__)
 
+# Одна обложка «на все случаи» в этом модуле (можно сделать несколько)
+CALLBACK_COVER = "app/telegram_bot/images/Chats.png"
+
+
 async def instructions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Показывает "Меню инструкций": текущие инструкции, кнопки "редактировать / удалить / добавить".
     """
     query = update.callback_query
+    await query.answer()
     chat_id = query.message.chat.id
 
-    # Берём session_factory
     session_factory = context.application.bot_data.get("session_factory")
     if not session_factory:
         logger.error("No session_factory found. Can't load instructions.")
-        await query.edit_message_text("Ошибка: нет подключения к БД.")
+        text = "Ошибка: нет подключения к БД."
+        media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+        await query.edit_message_media(media=media)
         return
 
+    # Получаем инструкции из БД
     async with session_factory() as session:
         current_instructions = await get_user_instructions(session, chat_id)
         current_instructions = current_instructions or ""
@@ -84,26 +84,38 @@ async def instructions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]]
 
     keyboard.append([InlineKeyboardButton("В меню", callback_data="back_to_menu")])
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+    await query.edit_message_media(
+        media=media,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
 
 async def instructions_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Удаление (очистка) инструкций у пользователя.
     """
     query = update.callback_query
+    await query.answer()
     chat_id = query.message.chat.id
 
     session_factory = context.application.bot_data.get("session_factory")
     if not session_factory:
         logger.error("No session_factory found. Can't delete instructions.")
-        await query.edit_message_text("Ошибка: нет подключения к БД.")
+        text = "Ошибка: нет подключения к БД."
+        media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+        await query.edit_message_media(media=media)
         return
 
     async with session_factory() as session:
         await set_user_instructions(session, chat_id, "")
 
+    # Показываем меню инструкций снова
+    # Можно сначала вывести «Инструкции удалены», затем снова меню, но
+    # проще сразу вернуть в instructions_menu (которая сама выведет актуальное состояние)
     await query.answer("Инструкции удалены.")
     await instructions_menu(update, context)
+
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -112,7 +124,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     query = update.callback_query
     data = query.data
-
     await query.answer()
 
     if data == "back_to_menu":
@@ -136,8 +147,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton(model, callback_data=f"model_{model}")] for model in predefined_models]
         keyboard.append([InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")])
 
-        await query.edit_message_text(
-            text="Выберите модель:",
+        text = "Выберите модель:"
+        media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+        await query.edit_message_media(
+            media=media,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
@@ -146,7 +159,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session_factory = context.application.bot_data.get("session_factory")
         if not session_factory:
             logger.error("No session_factory found. Can't set model.")
-            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            text = "Ошибка: нет подключения к БД."
+            media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+            await query.edit_message_media(media=media)
             return
 
         selected_model = data.split("_", 1)[1]
@@ -155,7 +170,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with session_factory() as session:
             await set_user_model(session, chat_id, selected_model)
 
-        # Сразу возвращаем в меню (без "Выбрана модель: ...")
+        # Возвращаемся в меню
         await menu_command(update, context)
         return
 
@@ -181,19 +196,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "5. «Инструкции» – задать/редактировать/удалить общие инструкции.\n"
             "6. «История» – просмотр истории активного чата.\n"
         )
-        await query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")]
-            ])
-        )
+        keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")]]
+        media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+        await query.edit_message_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     elif data == "history_current_chat":
         session_factory = context.application.bot_data.get("session_factory")
         if not session_factory:
             logger.error("No session_factory found. Can't get active chat.")
-            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            text = "Ошибка: нет подключения к БД."
+            media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+            await query.edit_message_media(media=media)
             return
 
         user_id = query.message.chat.id
@@ -202,12 +216,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if active_id:
             await show_chat_history(update, context, active_id, page=0)
         else:
-            await query.edit_message_text(
-                text="У вас нет активного чата. Создайте или выберите чат.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")]
-                ])
-            )
+            text = "У вас нет активного чата. Создайте или выберите чат."
+            keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")]]
+            media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+            await query.edit_message_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     elif data.startswith("open_chat_"):
@@ -219,7 +231,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session_factory = context.application.bot_data.get("session_factory")
         if not session_factory:
             logger.error("No session_factory found. Can't set active chat.")
-            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            text = "Ошибка: нет подключения к БД."
+            media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+            await query.edit_message_media(media=media)
             return
 
         chat_db_id = int(data.split("_")[-1])
@@ -227,11 +241,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with session_factory() as session:
             await set_active_chat_id(session, user_id, chat_db_id)
 
-        await query.edit_message_text(
-            text=f"Чат {chat_db_id} теперь активен.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")]
-            ])
+        text = f"Чат {chat_db_id} теперь активен."
+        keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")]]
+        media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+        await query.edit_message_media(
+            media=media,
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
 
@@ -242,7 +257,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session_factory = context.application.bot_data.get("session_factory")
         if not session_factory:
             logger.error("No session_factory found. Can't delete chat.")
-            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            text = "Ошибка: нет подключения к БД."
+            media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+            await query.edit_message_media(media=media)
             return
 
         chat_db_id = int(data.split("_")[-1])
@@ -253,20 +270,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await set_active_chat_id(session, user_id, None)
             await delete_chat(session, chat_db_id)
 
-        await query.edit_message_text(
-            text=f"Чат {chat_db_id} удалён.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")]
-            ])
-        )
+        text = f"Чат {chat_db_id} удалён."
+        keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")]]
+        media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+        await query.edit_message_media(media=media, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     elif data.startswith("fav_"):
         session_factory = context.application.bot_data.get("session_factory")
         if not session_factory:
             logger.error("No session_factory found. Can't favorite chat.")
-            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            text = "Ошибка: нет подключения к БД."
+            media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+            await query.edit_message_media(media=media)
             return
+
         chat_db_id = int(data.split("_")[-1])
         async with session_factory() as session:
             await set_chat_favorite(session, chat_db_id, True)
@@ -278,8 +296,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session_factory = context.application.bot_data.get("session_factory")
         if not session_factory:
             logger.error("No session_factory found. Can't unfavorite chat.")
-            await query.edit_message_text("Ошибка: нет подключения к БД.")
+            text = "Ошибка: нет подключения к БД."
+            media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+            await query.edit_message_media(media=media)
             return
+
         chat_db_id = int(data.split("_")[-1])
         async with session_factory() as session:
             await set_chat_favorite(session, chat_db_id, False)
@@ -298,11 +319,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_chat_history(update, context, chat_db_id, page)
         return
 
-    # Если ничего не подошло
-    await query.edit_message_text(
-        "Неизвестная команда.",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")]
-        ])
+    # Ничего не подошло — неизвестная команда
+    text = "Неизвестная команда."
+    keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="back_to_menu")]]
+    media = InputMediaPhoto(open(CALLBACK_COVER, "rb"), caption=text)
+    await query.edit_message_media(
+        media=media,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return ConversationHandler.END

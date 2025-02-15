@@ -96,8 +96,6 @@ alembic upgrade head
 4. Запустите:Telegram будет слать запросы на `https://ваш.домен/bot`, Nginx проксирует их к вашему приложению.
     
     ```bash
-    bash
-    КопироватьРедактировать
     python -m app.main
     
     ```
