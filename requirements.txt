@@ -7,3 +7,4 @@ flask
 sqlalchemy
 httpx
 aiosqlite
+sqladmin
